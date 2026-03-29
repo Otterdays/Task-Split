@@ -1,0 +1,14 @@
+<Window x:Class="TaskSplit.Views.TaskbarOverlay"
+        xmlns="http://schemas.microsoft.com/winfx/2000/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2000/xaml"
+        Title="TaskSplit Overlay"
+        Background="Transparent"
+        AllowsTransparency="True"
+        WindowStyle="None"
+        ShowInTaskbar="False"
+        Topmost="True"
+        IsHitTestVisible="False">
+    <Canvas x:Name="OverlayCanvas">
+        <!-- Dividers and Labels will be rendered here programmatically -->
+    </Canvas>
+</Window>
