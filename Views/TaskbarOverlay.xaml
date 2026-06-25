@@ -23,6 +23,16 @@
                 BorderBrush="#33FFFFFF"
                 BorderThickness="0,0,0,1"
                 Padding="8,3">
+            <Border.ToolTip>
+                <ToolTip Content="Drag to move · Pull sides or bottom edge to resize"
+                         FontFamily="Segoe UI"
+                         FontSize="11"
+                         Background="#FF2A2A2E"
+                         Foreground="White"
+                         BorderBrush="#55FFFFFF"
+                         BorderThickness="1"
+                         Padding="8,4,8,4" />
+            </Border.ToolTip>
             <Grid>
                 <StackPanel Orientation="Horizontal"
                             VerticalAlignment="Center"
@@ -74,6 +84,16 @@
                     BorderBrush="#FF5B8CFF"
                     BorderThickness="1"
                     Click="AddAppButton_Click">
+                <Button.ToolTip>
+                    <ToolTip Content="Search installed apps and add one to a group"
+                             FontFamily="Segoe UI"
+                             FontSize="11"
+                             Background="#FF2A2A2E"
+                             Foreground="White"
+                             BorderBrush="#55FFFFFF"
+                             BorderThickness="1"
+                             Padding="8,4,8,4" />
+                </Button.ToolTip>
                 <StackPanel Orientation="Horizontal">
                     <Border Width="14"
                             Height="14"
@@ -120,62 +140,66 @@
               IsHitTestVisible="False">
             <Border x:Name="LeftGrip"
                     HorizontalAlignment="Left"
-                    Width="10"
+                    VerticalAlignment="Stretch"
                     Opacity="0">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
                         <GradientStop Color="#005B8CFF" Offset="0" />
-                        <GradientStop Color="#665B8CFF" Offset="1" />
+                        <GradientStop Color="#885B8CFF" Offset="0.55" />
+                        <GradientStop Color="#FF5B8CFF" Offset="1" />
                     </LinearGradientBrush>
                 </Border.Background>
                 <Line x:Name="LeftGripDash"
-                      X1="5" X2="5"
-                      Y1="0" Y2="52"
-                      Stroke="#AA5B8CFF"
-                      StrokeThickness="1.5"
-                      StrokeDashArray="3 3"
+                      Y1="0"
+                      Stroke="#FFFFFFFF"
+                      StrokeThickness="2"
+                      StrokeDashArray="4 3"
                       VerticalAlignment="Center"
-                      HorizontalAlignment="Center" />
+                      HorizontalAlignment="Center"
+                      Opacity="0.85" />
             </Border>
 
             <Border x:Name="RightGrip"
                     HorizontalAlignment="Right"
-                    Width="10"
+                    VerticalAlignment="Stretch"
                     Opacity="0">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="1,0.5" EndPoint="0,0.5">
                         <GradientStop Color="#005B8CFF" Offset="0" />
-                        <GradientStop Color="#665B8CFF" Offset="1" />
+                        <GradientStop Color="#885B8CFF" Offset="0.55" />
+                        <GradientStop Color="#FF5B8CFF" Offset="1" />
                     </LinearGradientBrush>
                 </Border.Background>
                 <Line x:Name="RightGripDash"
-                      X1="5" X2="5"
-                      Y1="0" Y2="52"
-                      Stroke="#AA5B8CFF"
-                      StrokeThickness="1.5"
-                      StrokeDashArray="3 3"
+                      Y1="0"
+                      Stroke="#FFFFFFFF"
+                      StrokeThickness="2"
+                      StrokeDashArray="4 3"
                       VerticalAlignment="Center"
-                      HorizontalAlignment="Center" />
+                      HorizontalAlignment="Center"
+                      Opacity="0.85" />
             </Border>
 
             <Border x:Name="BottomGrip"
                     VerticalAlignment="Bottom"
-                    Height="10"
+                    HorizontalAlignment="Stretch"
                     Opacity="0">
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0.5,1" EndPoint="0.5,0">
                         <GradientStop Color="#005B8CFF" Offset="0" />
-                        <GradientStop Color="#665B8CFF" Offset="1" />
+                        <GradientStop Color="#885B8CFF" Offset="0.55" />
+                        <GradientStop Color="#FF5B8CFF" Offset="1" />
                     </LinearGradientBrush>
                 </Border.Background>
                 <Line x:Name="BottomGripDash"
-                      X1="0" X2="52"
-                      Y1="5" Y2="5"
-                      Stroke="#AA5B8CFF"
-                      StrokeThickness="1.5"
-                      StrokeDashArray="3 3"
+                      X1="0"
+                      Y1="0"
+                      Stroke="#FFFFFFFF"
+                      StrokeThickness="2"
+                      StrokeDashArray="4 3"
                       VerticalAlignment="Center"
-                      HorizontalAlignment="Center" />
+                      HorizontalAlignment="Center"
+                      Opacity="0.85" />
             </Border>
         </Grid>
     </Grid>

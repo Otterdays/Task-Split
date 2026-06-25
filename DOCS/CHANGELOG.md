@@ -1,6 +1,37 @@
 <!-- PRESERVATION RULE: Never delete or replace content. Append or annotate only. -->
 # Changelog: Task-Split Project
 
+## [0.1.7] - 2026-06-25
+### Added
+- **Overlay tooltips** — app chips show process name, running state, taskbar window title, and click action; group headers show app count and gap; title bar and **+ Add App** have usage hints. Dark-themed tooltip styling matches overlay chrome.
+
+## [0.1.6] - 2026-06-25
+### Fixed
+- **Overlay "always clickable" cursor** — `OnMouseMove` no longer forces `Hand` over the entire `ScrollViewer`; only resize edges and title bar override window cursor.
+- **App chips not interactive** — chips now show hover highlight, Hand cursor on chip only, and click focuses the app.
+- **App chip click did nothing** — `TryFocusApp` now uses Win11 UIA `InvokePattern`, simulated taskbar click at button screen coords, then `EnumWindows` + `ForceForegroundWindow` (Electron/multi-process apps no longer rely on `MainWindowHandle`).
+
+### Added
+- **Launch fallback** — clicking a chip for a non-running app attempts to start it via `AppDiscoveryService` exe lookup.
+
+## [0.1.5] - 2026-06-25
+### Added
+- **Groups panel** on overlay — lists configured groups and app chips; green dot when app is on the taskbar.
+- **Add App search sort** — default list sorted by recently added (registry install date, shortcut mtime, exe creation time); `DiscoveredApp.AddedAt`.
+- **Resize edge visuals** — blue gradient + dashed midpoint line on hover (driven from `WM_NCHITTEST`, not WPF `MouseMove`).
+
+### Fixed
+- **Add App appeared to do nothing** — config saved but UI only drew off-screen taskbar dividers; groups panel always reflects `config.json`.
+- **Overlay collapsed to taskbar strip** on snap — now opens at ≥220px height, bottom-aligned above taskbar.
+- **Content vanished while dragging** — full UI rebuild on every `LocationChanged` removed; debounced refresh on resize only.
+- **Could not click scroll bar / content** — `HTCAPTION` limited to title bar; client area returns `HTCLIENT`.
+- **Add App Group combo** — black Segoe UI text on white (closed + dropdown); removed broken `SystemColors.WindowBrushKey` override.
+- **Win11 tip in README** — stock Win11 buttons now discovered via UI Automation (see 0.1.4).
+
+### Changed
+- Snap width remains half of detected taskbar width; dividers only in thin strip mode when auto-snapped.
+- Timer poll: manual layout refreshes groups only; auto-snap still runs full `SyncToTaskbar`.
+
 ## [0.1.4] - 2026-06-25
 ### Fixed
 - **Add App had no visible effect on overlay** — Win11 taskbar buttons are not child HWNDs; `TaskbarService` now falls back to UI Automation to enumerate `Taskbar.TaskListButtonAutomationPeer` items and map labels (e.g. "Cursor - 1 running window pinned") to process names. Debug log should show `Taskbar buttons: N` with N > 0.

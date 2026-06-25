@@ -25,9 +25,26 @@ graph TD
 ## Discovery Logic
 1.  **Find `Shell_TrayWnd`**: The root window for the primary Windows Taskbar.
 2.  **Navigate Down**: Drill into `ReBarWindow32` > `MSTaskSwWClass` > `MSTaskListWClass`.
-3.  **Enumerate Buttons**: Each direct child of `MSTaskListWClass` represents an app button cluster.
-4.  **Reposition**: (Best-effort) Use `SetWindowPos` to add pixel offsets matching the configured gaps.
-5.  **Overlay Sync**: The WPF window matches its dimensions to the taskbar rect and draws dividers at calculated offsets.
+3.  **Enumerate Buttons (HWND)**: Recurse child windows; skip container classes, collect visible leaf HWNDs.
+4.  **Win11 fallback (UI Automation)**: If HWND enum returns zero buttons, query `Taskbar.TaskListButtonAutomationPeer` under `Shell_TrayWnd`; map button labels to process names (e.g. `"Cursor - 1 running window pinned"` → `cursor`).
+5.  **Reposition**: (Best-effort, future) Use `SetWindowPos` to add pixel offsets matching the configured gaps.
+6.  **Overlay Sync**: Panel snaps bottom-aligned above taskbar (≥220px height, half taskbar width). Thin-strip mode draws dividers on canvas; groups panel always lists config.
+
+## [AMENDED 2026-06-25]: Overlay interaction model
+
+```mermaid
+graph LR
+    subgraph HitTest["WM_NCHITTEST"]
+        E[Left/Right/Bottom edges] --> R[HTLEFT / HTRIGHT / HTBOTTOM]
+        T[Title bar] --> C[HTCAPTION drag]
+        P[Content + scroll] --> CL[HTCLIENT clicks]
+    end
+    R --> FX[Resize grip visuals]
+    CL --> GP[GroupsPanel + Add App]
+```
+
+- **Manual layout lock** after user drag/resize; 2s timer refreshes groups only (no reposition).
+- **Resize grip FX** updated from `WndProc` (NC zones do not receive WPF `MouseMove`).
 
 ## Project Layout (2026-06-25)
 | Path | Role |
@@ -36,7 +53,7 @@ graph TD
 | `Services/TaskbarService.cs` | Taskbar HWND discovery & button enumeration |
 | `Services/ConfigService.cs` | `%AppData%\TaskSplit\config.json` persistence |
 | `Win32/NativeMethods.cs` | P/Invoke wrappers (`FindWindow`, `EnumChildWindows`, `RECT`, etc.) |
-| `Views/TaskbarOverlay.xaml` | Transparent overlay (dividers & labels) |
+| `Views/TaskbarOverlay.xaml` | Overlay panel (groups list, Add App, resize grips, optional dividers) |
 | `launch.bat` | Windows dev launcher (`dotnet run`; prepends SDK path for Explorer sessions) |
 
 ---
@@ -53,6 +70,13 @@ Additional components since initial layout:
 | `Views/AddAppDialog.xaml` | Add-app search UI |
 | `Models/DiscoveredApp.cs` | Search result model |
 | `Models/OverlayDiagnostics.cs` | Debug overlay report |
+
+## [AMENDED 2026-06-25]: Groups panel & Add App polish
+
+| Path | Role |
+|------|------|
+| `Models/DiscoveredApp.cs` | Search result + `AddedAt` / `AddedAtLabel` for install recency |
+| `Views/TaskbarOverlay.xaml.cs` | Groups panel render, `WndProc` hit-test, resize grip FX, manual layout |
 | `DOCS/FEATURES.md` | Prioritized roadmap & possible features |
 
 Planned work: see [FEATURES.md](FEATURES.md).

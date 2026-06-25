@@ -11,7 +11,13 @@ using TaskSplit.Win32;
 
 namespace TaskSplit.Services;
 
-public record TaskbarButton(IntPtr HWnd, string ProcessName, string Title, NativeMethods.RECT Rect, int Order);
+public record TaskbarButton(
+    IntPtr HWnd,
+    string ProcessName,
+    string Title,
+    NativeMethods.RECT Rect,
+    int Order,
+    AutomationElement? AutomationElement = null);
 
 public class TaskbarService
 {
@@ -45,6 +51,112 @@ public class TaskbarService
         if (buttons.Count == 0)
             buttons = GetTaskbarButtonsViaAutomation();
         return buttons;
+    }
+
+    /// <summary>Brings an app to the foreground via taskbar button or process windows.</summary>
+    public bool TryFocusApp(string processName)
+    {
+        if (string.IsNullOrWhiteSpace(processName)) return false;
+
+        var matches = GetTaskbarButtons()
+            .Where(b => ProcessNameMatches(b, processName))
+            .ToList();
+
+        foreach (var btn in matches)
+        {
+            if (TryInvokeTaskbarButton(btn))
+            {
+                Debug.WriteLine($"[TaskSplit] Focused {processName} via UIA invoke");
+                return true;
+            }
+
+            if (TryClickTaskbarButton(btn))
+            {
+                Debug.WriteLine($"[TaskSplit] Focused {processName} via taskbar click");
+                return true;
+            }
+        }
+
+        if (TryFocusProcessWindows(processName))
+        {
+            Debug.WriteLine($"[TaskSplit] Focused {processName} via window enum");
+            return true;
+        }
+
+        Debug.WriteLine($"[TaskSplit] Failed to focus {processName}");
+        return false;
+    }
+
+    private static bool TryInvokeTaskbarButton(TaskbarButton btn)
+    {
+        if (btn.AutomationElement == null) return false;
+
+        try
+        {
+            if (btn.AutomationElement.GetCurrentPattern(InvokePattern.Pattern) is InvokePattern invoke)
+            {
+                invoke.Invoke();
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[TaskSplit] UIA invoke failed: {ex.Message}");
+        }
+
+        return false;
+    }
+
+    private static bool TryClickTaskbarButton(TaskbarButton btn)
+    {
+        if (btn.Rect.Width <= 0 || btn.Rect.Height <= 0) return false;
+
+        try
+        {
+            var screenX = (btn.Rect.Left + btn.Rect.Right) / 2;
+            var screenY = (btn.Rect.Top + btn.Rect.Bottom) / 2;
+            return NativeMethods.SimulateScreenClick(screenX, screenY);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[TaskSplit] Taskbar click failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool TryFocusProcessWindows(string processName)
+    {
+        var pids = CollectProcessIds(processName);
+        if (pids.Count == 0) return false;
+
+        var hwnd = NativeMethods.FindBestWindowForProcesses(pids);
+        return hwnd != IntPtr.Zero && NativeMethods.ForceForegroundWindow(hwnd);
+    }
+
+    private static HashSet<uint> CollectProcessIds(string processName)
+    {
+        var pids = new HashSet<uint>();
+        foreach (var proc in Process.GetProcessesByName(processName))
+        {
+            try { pids.Add((uint)proc.Id); }
+            catch { /* ignore */ }
+            finally { proc.Dispose(); }
+        }
+
+        if (pids.Count > 0) return pids;
+
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                if (proc.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+                    pids.Add((uint)proc.Id);
+            }
+            catch { /* ignore */ }
+            finally { proc.Dispose(); }
+        }
+
+        return pids;
     }
 
     private List<TaskbarButton> GetTaskbarButtonsViaHwnd()
@@ -122,7 +234,7 @@ public class TaskbarService
                 var (el, rect) = sorted[i];
                 var label = el.Current.Name ?? "";
                 var processName = ResolveProcessNameFromLabel(label);
-                buttons.Add(new TaskbarButton(IntPtr.Zero, processName, label, rect, i));
+                buttons.Add(new TaskbarButton(IntPtr.Zero, processName, label, rect, i, el));
             }
         }
         catch (Exception ex)
@@ -179,6 +291,19 @@ public class TaskbarService
             name = name[..dash];
 
         return name.Trim();
+    }
+
+    private static bool ProcessNameMatches(TaskbarButton button, string processName)
+    {
+        if (button.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        var humanized = HumanizeProcessName(processName);
+        if (HumanizeProcessName(button.ProcessName).Equals(humanized, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return button.Title.Contains(humanized, StringComparison.OrdinalIgnoreCase)
+            || button.Title.Contains(processName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string HumanizeProcessName(string processName) =>

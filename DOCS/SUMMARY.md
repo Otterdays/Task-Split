@@ -1,7 +1,7 @@
 <!-- PRESERVATION RULE: Never delete or replace content. Append or annotate only. -->
 # Project Summary: Task-Split
 
-**Status:** 🏗️ Development (Alpha — MVP + Add App UI)
+**Status:** 🏗️ Development (Alpha — MVP + Add App UI + Groups panel)
 **Objective:** A Windows taskbar enhancement tool for grouping and spacing icons.
 
 ## Quick Links
@@ -13,4 +13,5 @@
 - [README](../README.md) · [launch.bat](../launch.bat)
 
 ## Current Focus
-- See [FEATURES.md](FEATURES.md) Tier 1 — production overlay, settings UI, Win11 grouping, ship path.
+- Overlay groups panel UX (tooltips, click-to-focus shipped); taskbar physical spacing (Tier 1 in [FEATURES.md](FEATURES.md)).
+- Win11 taskbar button discovery via UI Automation is in place; physical icon gaps remain future work.

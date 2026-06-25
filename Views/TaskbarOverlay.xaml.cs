@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
@@ -7,6 +8,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using TaskSplit.Models;
 using TaskSplit.Services;
@@ -23,6 +25,8 @@ public partial class TaskbarOverlay : Window
     private const double ResizeBorderBottom = 12;
 
     private const int WM_NCHITTEST = 0x0084;
+    private const int WM_NCMOUSELEAVE = 0x02A2;
+    private const int WM_MOUSELEAVE = 0x02A3;
     private const int HTCLIENT = 1;
     private const int HTCAPTION = 2;
     private const int HTLEFT = 10;
@@ -40,6 +44,7 @@ public partial class TaskbarOverlay : Window
     private bool _applyingAutoLayout;
     private HwndSource? _hwndSource;
     private DispatcherTimer? _refreshDebounce;
+    private ResizeZone _activeGripZone = ResizeZone.None;
 
     public bool IsManualLayout => _manualLayout;
 
@@ -64,7 +69,7 @@ public partial class TaskbarOverlay : Window
         LocationChanged += OnLocationChangedByUser;
         SizeChanged += OnSizeChangedByUser;
         MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => SetResizeGripVisibility(ResizeZone.None);
+        MouseLeave += (_, _) => UpdateGripFromZone(ResizeZone.None);
     }
 
     private enum ResizeZone { None, Left, Right, Bottom, BottomLeft, BottomRight, TitleBar }
@@ -144,8 +149,9 @@ public partial class TaskbarOverlay : Window
         if (_applyingAutoLayout) return;
         var point = e.GetPosition(this);
         var zone = GetResizeZone(point);
-        SetResizeGripVisibility(zone);
-        Cursor = ResolveCursor(point, zone);
+        UpdateGripFromZone(zone);
+        // Only override cursor for resize/title zones — client controls set their own Hand cursor.
+        Cursor = zone == ResizeZone.None ? null : ResolveCursor(zone);
     }
 
     public void SyncToTaskbar()
@@ -180,6 +186,12 @@ public partial class TaskbarOverlay : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
+        if (msg is WM_NCMOUSELEAVE or WM_MOUSELEAVE)
+        {
+            UpdateGripFromZone(ResizeZone.None);
+            return IntPtr.Zero;
+        }
+
         if (msg != WM_NCHITTEST) return IntPtr.Zero;
 
         var point = PointFromScreen(GetScreenPointFromLParam(lParam));
@@ -191,6 +203,9 @@ public partial class TaskbarOverlay : Window
         var borderH = ScaledBorder(ResizeBorderHorizontal);
         var borderBottom = ScaledBorder(ResizeBorderBottom);
         var zone = GetResizeZone(point, width, height, borderH, borderBottom);
+
+        // NC resize zones never raise WPF MouseMove — drive grip FX from hit-test.
+        UpdateGripFromZone(zone);
 
         switch (zone)
         {
@@ -247,16 +262,36 @@ public partial class TaskbarOverlay : Window
     private double GetTitleBarHeight() =>
         TitleBarBorder.ActualHeight > 0 ? TitleBarBorder.ActualHeight : 28;
 
+    private void UpdateGripFromZone(ResizeZone zone)
+    {
+        if (zone == _activeGripZone) return;
+        _activeGripZone = zone;
+
+        void Apply() => SetResizeGripVisibility(zone);
+
+        if (Dispatcher.CheckAccess()) Apply();
+        else Dispatcher.BeginInvoke(Apply);
+    }
+
     private void SetResizeGripVisibility(ResizeZone zone)
     {
-        const double visible = 1;
-        const double hidden = 0;
+        AnimateGripOpacity(LeftGrip, zone is ResizeZone.Left or ResizeZone.BottomLeft);
+        AnimateGripOpacity(RightGrip, zone is ResizeZone.Right or ResizeZone.BottomRight);
+        AnimateGripOpacity(BottomGrip,
+            zone is ResizeZone.Bottom or ResizeZone.BottomLeft or ResizeZone.BottomRight);
+    }
 
-        LeftGrip.Opacity = zone is ResizeZone.Left or ResizeZone.BottomLeft ? visible : hidden;
-        RightGrip.Opacity = zone is ResizeZone.Right or ResizeZone.BottomRight ? visible : hidden;
-        BottomGrip.Opacity = zone is ResizeZone.Bottom or ResizeZone.BottomLeft or ResizeZone.BottomRight
-            ? visible
-            : hidden;
+    private static void AnimateGripOpacity(UIElement element, bool visible)
+    {
+        var anim = new DoubleAnimation
+        {
+            To = visible ? 1.0 : 0.0,
+            Duration = TimeSpan.FromMilliseconds(120),
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
+            FillBehavior = FillBehavior.Stop,
+        };
+        anim.Completed += (_, _) => element.Opacity = visible ? 1.0 : 0.0;
+        element.BeginAnimation(UIElement.OpacityProperty, anim);
     }
 
     private static Point GetScreenPointFromLParam(IntPtr lParam)
@@ -277,24 +312,36 @@ public partial class TaskbarOverlay : Window
         return NativeMethods.GetDpiScale(_taskbarService.TrayWindowHandle);
     }
 
-    private Cursor ResolveCursor(Point point, ResizeZone zone) => zone switch
+    private static Cursor ResolveCursor(ResizeZone zone) => zone switch
     {
         ResizeZone.BottomLeft => Cursors.SizeNESW,
         ResizeZone.BottomRight => Cursors.SizeNWSE,
         ResizeZone.Left or ResizeZone.Right => Cursors.SizeWE,
         ResizeZone.Bottom => Cursors.SizeNS,
         ResizeZone.TitleBar => Cursors.SizeAll,
-        _ when IsInteractiveElement(point) => Cursors.Hand,
         _ => Cursors.Arrow,
     };
 
     private void UpdateGripDashSizes()
     {
         if (!IsLoaded) return;
+
+        var edgeW = ScaledBorder(ResizeBorderHorizontal);
+        var edgeH = ScaledBorder(ResizeBorderBottom);
+        LeftGrip.Width = edgeW;
+        RightGrip.Width = edgeW;
+        BottomGrip.Height = edgeH;
+
         var dashV = Math.Clamp(ActualHeight * 0.35, 36, 120);
         var dashH = Math.Clamp(ActualWidth * 0.35, 36, 120);
+        LeftGripDash.X1 = edgeW / 2;
+        LeftGripDash.X2 = edgeW / 2;
         LeftGripDash.Y2 = dashV;
+        RightGripDash.X1 = edgeW / 2;
+        RightGripDash.X2 = edgeW / 2;
         RightGripDash.Y2 = dashV;
+        BottomGripDash.Y1 = edgeH / 2;
+        BottomGripDash.Y2 = edgeH / 2;
         BottomGripDash.X2 = dashH;
     }
 
@@ -305,9 +352,10 @@ public partial class TaskbarOverlay : Window
         var current = hit;
         while (current != null)
         {
-            if (current is Button or ButtonBase or TextBoxBase or ComboBox or ListBox or ListBoxItem
-                or ScrollViewer or ScrollBar or Thumb or RepeatButton)
+            if (current is Button or ButtonBase or TextBoxBase or ComboBox
+                or ScrollBar or Thumb or RepeatButton)
                 return true;
+            if (current is FrameworkElement { Tag: string }) return true;
             current = VisualTreeHelper.GetParent(current);
         }
 
@@ -429,9 +477,13 @@ public partial class TaskbarOverlay : Window
             return;
         }
 
+        var taskbarButtons = _taskbarService.GetTaskbarButtons();
         var onTaskbar = new HashSet<string>(
-            _taskbarService.GetTaskbarButtons().Select(b => b.ProcessName),
+            taskbarButtons.Select(b => b.ProcessName),
             StringComparer.OrdinalIgnoreCase);
+        var taskbarTitles = taskbarButtons
+            .GroupBy(b => b.ProcessName, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Title, StringComparer.OrdinalIgnoreCase);
 
         foreach (var group in _config.Groups)
         {
@@ -457,6 +509,8 @@ public partial class TaskbarOverlay : Window
                 Foreground = accent,
                 Margin = new Thickness(0, 0, 0, 4),
             };
+            ToolTipService.SetToolTip(header, MakeTooltip(
+                $"{group.Name}\n{group.ProcessNames.Count} app(s) · {group.GapAfter}px gap after group"));
             stack.Children.Add(header);
 
             if (group.ProcessNames.Count == 0)
@@ -469,7 +523,8 @@ public partial class TaskbarOverlay : Window
                 foreach (var processName in group.ProcessNames)
                 {
                     var running = onTaskbar.Contains(processName);
-                    wrap.Children.Add(BuildAppChip(processName, running, accent));
+                    taskbarTitles.TryGetValue(processName, out var taskbarTitle);
+                    wrap.Children.Add(BuildAppChip(processName, running, accent, taskbarTitle));
                 }
                 stack.Children.Add(wrap);
             }
@@ -479,17 +534,26 @@ public partial class TaskbarOverlay : Window
         }
     }
 
-    private static Border BuildAppChip(string processName, bool onTaskbar, Brush accent)
+    private Border BuildAppChip(string processName, bool onTaskbar, Brush accent, string? taskbarTitle = null)
     {
         var label = HumanizeProcessName(processName);
+        var idleBg = new SolidColorBrush(Color.FromArgb(0x33, 0x5B, 0x8C, 0xFF));
+        var hoverBg = new SolidColorBrush(Color.FromArgb(0x55, 0x5B, 0x8C, 0xFF));
+        var idleBorder = onTaskbar
+            ? accent
+            : new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF));
+
         var chip = new Border
         {
-            Background = new SolidColorBrush(Color.FromArgb(0x33, 0x5B, 0x8C, 0xFF)),
-            BorderBrush = onTaskbar ? accent : new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+            Tag = processName,
+            Background = idleBg,
+            BorderBrush = idleBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10),
             Padding = new Thickness(8, 2, 8, 2),
             Margin = new Thickness(0, 0, 6, 4),
+            Cursor = Cursors.Hand,
+            ToolTip = MakeTooltip(BuildChipTooltip(processName, label, onTaskbar, taskbarTitle)),
         };
 
         var row = new StackPanel { Orientation = Orientation.Horizontal };
@@ -513,11 +577,76 @@ public partial class TaskbarOverlay : Window
             FontSize = 10,
             Foreground = Brushes.White,
             VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
         });
 
         chip.Child = row;
+        chip.MouseEnter += (_, _) => chip.Background = hoverBg;
+        chip.MouseLeave += (_, _) => chip.Background = idleBg;
+        chip.MouseLeftButtonUp += (_, e) =>
+        {
+            e.Handled = true;
+            FocusOrLaunchApp(processName);
+        };
         return chip;
     }
+
+    private void FocusOrLaunchApp(string processName)
+    {
+        if (_taskbarService.TryFocusApp(processName)) return;
+
+        _ = LaunchAppAsync(processName);
+    }
+
+    private async Task LaunchAppAsync(string processName)
+    {
+        try
+        {
+            var apps = await _appDiscovery.SearchAsync(processName);
+            var app = apps.FirstOrDefault(a =>
+                a.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+            if (app == null || !File.Exists(app.ExePath)) return;
+
+            Process.Start(new ProcessStartInfo(app.ExePath) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[TaskSplit] Launch failed for {processName}: {ex.Message}");
+        }
+    }
+
+    private static string BuildChipTooltip(
+        string processName, string label, bool onTaskbar, string? taskbarTitle)
+    {
+        var lines = new List<string> { label, $"{processName}.exe" };
+
+        if (onTaskbar)
+        {
+            lines.Add("Running on taskbar");
+            if (!string.IsNullOrWhiteSpace(taskbarTitle))
+                lines.Add(taskbarTitle);
+            lines.Add("Click to switch to this app");
+        }
+        else
+        {
+            lines.Add("Not running");
+            lines.Add("Click to launch");
+        }
+
+        return string.Join('\n', lines);
+    }
+
+    private static ToolTip MakeTooltip(string text) => new()
+    {
+        Content = text,
+        FontFamily = new FontFamily("Segoe UI"),
+        FontSize = 11,
+        Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
+        Foreground = Brushes.White,
+        BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+        BorderThickness = new Thickness(1),
+        Padding = new Thickness(8, 4, 8, 4),
+    };
 
     private static TextBlock MakeHintText(string text) => new()
     {

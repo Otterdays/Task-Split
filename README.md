@@ -15,9 +15,10 @@ The Windows 11 taskbar, while modern, removed the ability to effectively group a
 
 ### Key Features
 - 🏷️ **Visual Logic Groups**: Assign apps (e.g., "Work," "Social," "Browser") to named groups.
-- 📐 **Dynamic Spacing**: Add custom pixel gaps between icon clusters.
-- 🎨 **Overlay System**: Taskbar-aligned overlay with group labels and colored dividers.
-- ➕ **Add App UI**: Search, browse, or scan the system for `.exe` files and add them to a group.
+- 📋 **Groups Panel**: Overlay lists your groups and apps; green dot = running/pinned on taskbar.
+- 📐 **Dynamic Spacing**: Add custom pixel gaps between icon clusters (overlay dividers when snapped to taskbar strip).
+- 🎨 **Overlay System**: Floating panel or taskbar-aligned strip with group labels and colored dividers.
+- ➕ **Add App UI**: Search (newest first), browse, or scan the system for `.exe` files and add them to a group.
 - 🧩 **Zero-Invasion**: Runs as a lightweight system tray app; no shell replacement required.
 
 ---
@@ -73,13 +74,14 @@ dotnet build -c Release
 ## 🛠️ Usage
 
 1.  **Run** `launch.bat` or `dotnet run` (or `TaskSplit.exe` after building).
-2.  **Overlay** appears along the taskbar (or bottom of screen if auto-detect fails). Drag the center to move; drag edges to resize.
-3.  **Add apps** — click **+ Add App** in the overlay, search or browse for an executable, pick a group, and confirm. Saves to `%AppData%\TaskSplit\config.json`.
-4.  **Tray menu** — Show Overlay, Snap to Taskbar, Debug Overlay Info, Reset Taskbar Cache, Exit.
-5.  **Manual config** — edit `%AppData%\TaskSplit\config.json` directly (process names e.g. `chrome`, `code`, `discord`).
+2.  **Overlay** opens above the taskbar (~220px tall, half taskbar width). **Drag the title bar** to move; **drag left/right/bottom edges** to resize (blue glow + dashed hint on hover).
+3.  **Groups panel** — shows your groups and apps below **+ Add App**. Scroll if needed. Green dot = app is on the taskbar now.
+4.  **Add apps** — click **+ Add App**, search (newest installs first) or browse for an `.exe`, pick a group, confirm. Saves to `%AppData%\TaskSplit\config.json`.
+5.  **Tray menu** — Show Overlay, **Snap to Taskbar**, Debug Overlay Info, Reset Taskbar Cache, Exit.
+6.  **Manual config** — edit `%AppData%\TaskSplit\config.json` (process names e.g. `chrome`, `code`, `cursor`).
 
 > [!TIP]
-> **Windows 11 Users:** For physical icon repositioning, [ExplorerPatcher](https://github.com/valinet/ExplorerPatcher) is highly recommended to restore the classic taskbar API functionality. Stock Win11 may return zero taskbar buttons; overlay positioning and dividers still work via `Shell_TrayWnd`.
+> **Windows 11:** Taskbar buttons are discovered via **UI Automation** when classic HWND enumeration finds none. Check **Debug Overlay Info** — `Taskbar buttons` should be > 0. For physical icon repositioning, [ExplorerPatcher](https://github.com/valinet/ExplorerPatcher) may still help classic spacing APIs.
 
 ---
 
