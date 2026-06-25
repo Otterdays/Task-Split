@@ -18,6 +18,7 @@ public partial class App : Application
     private ConfigService? _configService;
     private AppConfig? _config;
     private TaskbarService? _taskbarService;
+    private AppDiscoveryService? _appDiscoveryService;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -26,6 +27,7 @@ public partial class App : Application
         _configService = new ConfigService();
         _config = _configService.Load();
         _taskbarService = new TaskbarService();
+        _appDiscoveryService = new AppDiscoveryService();
 
         InitializeTray();
         InitializeOverlay();
@@ -41,7 +43,7 @@ public partial class App : Application
     {
         _notifyIcon = new TaskbarIcon
         {
-            ToolTipText = "TaskSplit - Organized Windows",
+            ToolTipText = "Task-Split — Organized Windows",
             Icon = SystemIcons.Application,
             Visibility = Visibility.Visible
         };
@@ -59,12 +61,28 @@ public partial class App : Application
         var settingsItem = new MenuItem { Header = "Settings" };
         settingsItem.Click += (s, ev) => ShowSettings();
 
+        var debugItem = new MenuItem { Header = "Debug Overlay Info" };
+        debugItem.Click += (s, ev) => ShowDebugInfo();
+
+        var snapItem = new MenuItem { Header = "Snap to Taskbar" };
+        snapItem.Click += (s, ev) => _overlay?.SnapToTaskbar();
+
+        var resetItem = new MenuItem { Header = "Reset Taskbar Cache" };
+        resetItem.Click += (s, ev) =>
+        {
+            _taskbarService?.ResetCache();
+            _overlay?.SnapToTaskbar();
+        };
+
         var exitItem = new MenuItem { Header = "Exit" };
         exitItem.Click += (s, ev) => Shutdown();
 
         menu.Items.Add(toggleItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(settingsItem);
+        menu.Items.Add(snapItem);
+        menu.Items.Add(debugItem);
+        menu.Items.Add(resetItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(exitItem);
 
@@ -73,15 +91,26 @@ public partial class App : Application
 
     private void InitializeOverlay()
     {
-        _overlay = new TaskbarOverlay(_taskbarService!);
-        _overlay.UpdateConfig(_config!);
+        _overlay = new TaskbarOverlay(_taskbarService!, _configService!, _appDiscoveryService!, _config!);
         _overlay.Show();
     }
 
     private void ShowSettings()
     {
-        // For MVP, just show a message box pointing to the config file
-        MessageBox.Show($"TaskSplit Settings\n\nEdit config at:\n%AppData%\\TaskSplit\\config.json\n\n(Complete UI coming in Phase 2!)", "TaskSplit Settings");
+        MessageBox.Show(
+            $"Task-Split Settings\n\nEdit config at:\n%AppData%\\TaskSplit\\config.json\n\n(Complete UI coming in Phase 2!)",
+            "Task-Split Settings");
+    }
+
+    private void ShowDebugInfo()
+    {
+        _overlay?.SyncToTaskbar();
+        var diag = _overlay?.GetDiagnostics();
+        if (diag == null) return;
+
+        MessageBox.Show(
+            diag.ToReport() + $"\n\nLog: %AppData%\\TaskSplit\\debug.log",
+            "Task-Split Debug");
     }
 
     protected override void OnExit(ExitEventArgs e)

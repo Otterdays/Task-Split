@@ -1,10 +1,12 @@
 // [TRACE: ARCHITECTURE.md]
 // Service: discovers taskbar window handles and running app buttons.
 // Approach: Shell_TrayWnd > ReBarWindow32 > MSTaskSwWClass > MSTaskListWClass
-// NOTE: This path works on Win10 and Win11 with ExplorerPatcher.
-//       On stock Win11, we can still get the taskbar rect for overlay positioning.
+// Win11 fallback: UI Automation (Taskbar.TaskListButtonAutomationPeer) when HWND enum finds nothing.
 
 using System.Diagnostics;
+using System.Text;
+using System.Windows.Automation;
+using TaskSplit.Models;
 using TaskSplit.Win32;
 
 namespace TaskSplit.Services;
@@ -13,83 +15,209 @@ public record TaskbarButton(IntPtr HWnd, string ProcessName, string Title, Nativ
 
 public class TaskbarService
 {
+    private static readonly Dictionary<string, string> DisplayNameAliases = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["File Explorer"] = "explorer",
+        ["Microsoft Edge"] = "msedge",
+        ["Windows Terminal"] = "windowsterminal",
+        ["Visual Studio Code"] = "code",
+        ["Visual Studio"] = "devenv",
+    };
+
     private IntPtr _trayWnd = IntPtr.Zero;
     private IntPtr _taskListWnd = IntPtr.Zero;
 
-    /// <summary>Returns the screen rect of the primary taskbar.</summary>
+    public IntPtr TrayWindowHandle => GetTrayWindow();
+
+    /// <summary>Returns the screen rect of the primary taskbar (physical pixels).</summary>
     public NativeMethods.RECT? GetTaskbarRect()
     {
         var tray = GetTrayWindow();
         if (tray == IntPtr.Zero) return null;
         NativeMethods.GetWindowRect(tray, out var rect);
+        if (rect.Width <= 0 || rect.Height <= 0) return null;
         return rect;
     }
 
-    /// <summary>
-    /// Returns buttonlike windows inside MSTaskListWClass.
-    /// Falls back to an empty list on Win11 stock taskbar.
-    /// </summary>
     public List<TaskbarButton> GetTaskbarButtons()
     {
-        var buttons = new List<TaskbarButton>();
+        var buttons = GetTaskbarButtonsViaHwnd();
+        if (buttons.Count == 0)
+            buttons = GetTaskbarButtonsViaAutomation();
+        return buttons;
+    }
 
+    private List<TaskbarButton> GetTaskbarButtonsViaHwnd()
+    {
+        var buttons = new List<TaskbarButton>();
         var taskList = GetTaskListWindow();
         if (taskList == IntPtr.Zero) return buttons;
 
-        int order = 0;
-        NativeMethods.EnumChildWindows(taskList, (hWnd, _) =>
+        EnumTaskbarButtonHwnds(taskList, buttons);
+        return buttons;
+    }
+
+    private static void EnumTaskbarButtonHwnds(IntPtr parent, List<TaskbarButton> buttons)
+    {
+        NativeMethods.EnumChildWindows(parent, (hWnd, _) =>
         {
-            // Each direct child of MSTaskListWClass is a button group (one per app)
             var className = NativeMethods.GetClassName(hWnd);
-            if (className is "MSTaskListWClass" or "MSTask" or "Button"
+
+            // Container nodes — recurse instead of treating as buttons.
+            if (className is "MSTaskListWClass" or "MSTaskSwWClass" or "MSTask"
                 || className.StartsWith("MSTask", StringComparison.Ordinal))
             {
-                return true; // skip nested
+                EnumTaskbarButtonHwnds(hWnd, buttons);
+                return true;
             }
 
             if (!NativeMethods.IsWindowVisible(hWnd)) return true;
 
             NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
             var procName = GetProcessName(pid);
-
             NativeMethods.GetWindowRect(hWnd, out var rect);
-            var title = NativeMethods.GetWindowText(hWnd);
+            if (rect.Width <= 0 || rect.Height <= 0) return true;
 
-            buttons.Add(new TaskbarButton(hWnd, procName, title, rect, order++));
+            var title = NativeMethods.GetWindowText(hWnd);
+            buttons.Add(new TaskbarButton(hWnd, procName, title, rect, buttons.Count));
             return true;
         }, IntPtr.Zero);
+    }
+
+    private static List<TaskbarButton> GetTaskbarButtonsViaAutomation()
+    {
+        var buttons = new List<TaskbarButton>();
+        try
+        {
+            var tray = AutomationElement.RootElement.FindFirst(
+                TreeScope.Children,
+                new PropertyCondition(AutomationElement.ClassNameProperty, "Shell_TrayWnd"));
+            if (tray == null) return buttons;
+
+            var items = tray.FindAll(
+                TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.ClassNameProperty, "Taskbar.TaskListButtonAutomationPeer"));
+
+            var sorted = new List<(AutomationElement El, NativeMethods.RECT Rect)>();
+            for (int i = 0; i < items.Count; i++)
+            {
+                var el = items[i];
+                var bounds = el.Current.BoundingRectangle;
+                if (bounds.Width <= 0 || bounds.Height <= 0) continue;
+
+                var rect = new NativeMethods.RECT
+                {
+                    Left = (int)Math.Round(bounds.Left),
+                    Top = (int)Math.Round(bounds.Top),
+                    Right = (int)Math.Round(bounds.Right),
+                    Bottom = (int)Math.Round(bounds.Bottom),
+                };
+                sorted.Add((el, rect));
+            }
+
+            sorted.Sort((a, b) => a.Rect.Left.CompareTo(b.Rect.Left));
+
+            for (int i = 0; i < sorted.Count; i++)
+            {
+                var (el, rect) = sorted[i];
+                var label = el.Current.Name ?? "";
+                var processName = ResolveProcessNameFromLabel(label);
+                buttons.Add(new TaskbarButton(IntPtr.Zero, processName, label, rect, i));
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[TaskSplit] UIA taskbar scan failed: {ex.Message}");
+        }
 
         return buttons;
     }
 
-    /// <summary>Returns all visible, non-system windows on the taskbar (from EnumWindows).</summary>
-    public List<TaskbarButton> GetVisibleWindows()
+    private static string ResolveProcessNameFromLabel(string label)
     {
-        var results = new List<TaskbarButton>();
-        int order = 0;
+        var displayName = ExtractDisplayName(label);
+        if (string.IsNullOrWhiteSpace(displayName)) return "unknown";
 
-        NativeMethods.EnumWindows((hWnd, _) =>
+        if (DisplayNameAliases.TryGetValue(displayName, out var alias))
+            return alias;
+
+        foreach (var proc in Process.GetProcesses())
         {
-            if (!NativeMethods.IsWindowVisible(hWnd)) return true;
+            try
+            {
+                var pn = proc.ProcessName.ToLowerInvariant();
+                if (displayName.Equals(proc.ProcessName, StringComparison.OrdinalIgnoreCase))
+                    return pn;
 
-            var title = NativeMethods.GetWindowText(hWnd);
-            if (string.IsNullOrWhiteSpace(title)) return true;
+                if (displayName.Equals(HumanizeProcessName(pn), StringComparison.OrdinalIgnoreCase))
+                    return pn;
 
-            var className = NativeMethods.GetClassName(hWnd);
-            // Skip shell/taskbar/system windows
-            if (className is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd"
-                or "Progman" or "WorkerW" or "DV2ControlHost") return true;
+                if (proc.MainWindowTitle.StartsWith(displayName, StringComparison.OrdinalIgnoreCase))
+                    return pn;
+            }
+            catch
+            {
+                // Access denied for system processes
+            }
+            finally
+            {
+                proc.Dispose();
+            }
+        }
 
-            NativeMethods.GetWindowThreadProcessId(hWnd, out uint pid);
-            var procName = GetProcessName(pid);
-            NativeMethods.GetWindowRect(hWnd, out var rect);
-
-            results.Add(new TaskbarButton(hWnd, procName, title, rect, order++));
-            return true;
-        }, IntPtr.Zero);
-
-        return results;
+        return displayName.Replace(" ", "").ToLowerInvariant();
     }
+
+    private static string ExtractDisplayName(string label)
+    {
+        var name = label.Trim();
+        if (name.EndsWith(" pinned", StringComparison.OrdinalIgnoreCase))
+            name = name[..^7].TrimEnd();
+
+        var dash = name.IndexOf(" - ", StringComparison.Ordinal);
+        if (dash > 0)
+            name = name[..dash];
+
+        return name.Trim();
+    }
+
+    private static string HumanizeProcessName(string processName) =>
+        string.Join(' ',
+            processName.Replace('_', ' ').Replace('-', ' ')
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Select(w => w.Length <= 1
+                    ? w.ToUpperInvariant()
+                    : char.ToUpperInvariant(w[0]) + w[1..]));
+
+    public OverlayDiagnostics GetDiagnostics(
+        double overlayLeft, double overlayTop, double overlayWidth, double overlayHeight,
+        bool overlayVisible, string positionMode)
+    {
+        var tray = GetTrayWindow();
+        var rect = GetTaskbarRect();
+        var taskList = GetTaskListWindow();
+        var dpi = NativeMethods.GetDpiScale(tray);
+
+        return new OverlayDiagnostics
+        {
+            TrayFound = tray != IntPtr.Zero,
+            TrayHwnd = FormatHwnd(tray),
+            TrayRectPhysical = rect is { } r
+                ? $"({r.Left},{r.Top})-({r.Right},{r.Bottom}) [{r.Width}x{r.Height}]"
+                : null,
+            TaskListFound = taskList != IntPtr.Zero,
+            TaskListHwnd = FormatHwnd(taskList),
+            ButtonCount = GetTaskbarButtons().Count,
+            OverlayPosition = $"{overlayLeft:F0}, {overlayTop:F0}",
+            OverlaySize = $"{overlayWidth:F0} x {overlayHeight:F0}",
+            OverlayVisible = overlayVisible,
+            DpiScale = dpi,
+            PositionMode = positionMode,
+            TaskbarChildTree = ProbeTaskbarTree(tray, maxDepth: 3),
+        };
+    }
+
+    public void ResetCache() => (_trayWnd, _taskListWnd) = (IntPtr.Zero, IntPtr.Zero);
 
     private IntPtr GetTrayWindow()
     {
@@ -105,16 +233,77 @@ public class TaskbarService
         var tray = GetTrayWindow();
         if (tray == IntPtr.Zero) return IntPtr.Zero;
 
-        // Drill: Shell_TrayWnd > ReBarWindow32 > MSTaskSwWClass > MSTaskListWClass
         var rebar = NativeMethods.FindWindowEx(tray, IntPtr.Zero, "ReBarWindow32", null);
-        if (rebar == IntPtr.Zero) return IntPtr.Zero;
 
-        var taskSw = NativeMethods.FindWindowEx(rebar, IntPtr.Zero, "MSTaskSwWClass", null);
-        if (taskSw == IntPtr.Zero) return IntPtr.Zero;
+        // Classic: ReBar > MSTaskSwWClass > MSTaskListWClass
+        if (rebar != IntPtr.Zero)
+        {
+            var taskSw = NativeMethods.FindWindowEx(rebar, IntPtr.Zero, "MSTaskSwWClass", null);
+            if (taskSw != IntPtr.Zero)
+            {
+                _taskListWnd = NativeMethods.FindWindowEx(taskSw, IntPtr.Zero, "MSTaskListWClass", null);
+                if (_taskListWnd != IntPtr.Zero) return _taskListWnd;
+            }
 
-        _taskListWnd = NativeMethods.FindWindowEx(taskSw, IntPtr.Zero, "MSTaskListWClass", null);
+            // Win11: MSTaskListWClass sometimes direct under ReBar
+            _taskListWnd = NativeMethods.FindWindowEx(rebar, IntPtr.Zero, "MSTaskListWClass", null);
+            if (_taskListWnd != IntPtr.Zero) return _taskListWnd;
+        }
+
+        // Deep fallback: search entire tray subtree
+        _taskListWnd = FindDescendant(tray, "MSTaskListWClass");
         return _taskListWnd;
     }
+
+    private static IntPtr FindDescendant(IntPtr root, string className)
+    {
+        IntPtr found = IntPtr.Zero;
+        NativeMethods.EnumChildWindows(root, (hwnd, _) =>
+        {
+            if (NativeMethods.GetClassName(hwnd) == className)
+            {
+                found = hwnd;
+                return false;
+            }
+
+            var nested = FindDescendant(hwnd, className);
+            if (nested != IntPtr.Zero)
+            {
+                found = nested;
+                return false;
+            }
+
+            return true;
+        }, IntPtr.Zero);
+
+        return found;
+    }
+
+    private static string ProbeTaskbarTree(IntPtr tray, int maxDepth)
+    {
+        if (tray == IntPtr.Zero) return "";
+        var sb = new StringBuilder();
+        AppendChildren(tray, sb, 0, maxDepth);
+        return sb.ToString().TrimEnd();
+    }
+
+    private static void AppendChildren(IntPtr parent, StringBuilder sb, int depth, int maxDepth)
+    {
+        if (depth > maxDepth) return;
+
+        NativeMethods.EnumChildWindows(parent, (hwnd, _) =>
+        {
+            var indent = new string(' ', depth * 2);
+            var cls = NativeMethods.GetClassName(hwnd);
+            NativeMethods.GetWindowRect(hwnd, out var r);
+            sb.AppendLine($"{indent}- {cls} [{r.Width}x{r.Height}] {FormatHwnd(hwnd)}");
+            AppendChildren(hwnd, sb, depth + 1, maxDepth);
+            return true;
+        }, IntPtr.Zero);
+    }
+
+    private static string FormatHwnd(IntPtr hwnd) =>
+        hwnd == IntPtr.Zero ? "0x0" : $"0x{hwnd.ToInt64():X}";
 
     private static string GetProcessName(uint pid)
     {

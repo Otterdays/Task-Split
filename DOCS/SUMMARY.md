@@ -1,15 +1,16 @@
 <!-- PRESERVATION RULE: Never delete or replace content. Append or annotate only. -->
-# Project Summary: TaskSplit
+# Project Summary: Task-Split
 
-**Status:** 🏗️ Development (Alpha)
+**Status:** 🏗️ Development (Alpha — MVP + Add App UI)
 **Objective:** A Windows taskbar enhancement tool for grouping and spacing icons.
 
 ## Quick Links
-- [SCRATCHPAD](file:///C:/Users/motor/.gemini/antigravity/scratch/tasksplit/DOCS/SCRATCHPAD.md)
-- [ARCHITECTURE](file:///C:/Users/motor/.gemini/antigravity/scratch/tasksplit/DOCS/ARCHITECTURE.md)
-- [STYLE_GUIDE](file:///C:/Users/motor/.gemini/antigravity/scratch/tasksplit/DOCS/STYLE_GUIDE.md)
-- [SBOM](file:///C:/Users/motor/.gemini/antigravity/scratch/tasksplit/DOCS/SBOM.md)
+- [SCRATCHPAD](SCRATCHPAD.md)
+- [FEATURES](FEATURES.md)
+- [ARCHITECTURE](ARCHITECTURE.md)
+- [STYLE_GUIDE](STYLE_GUIDE.md)
+- [SBOM](SBOM.md)
+- [README](../README.md) · [launch.bat](../launch.bat)
 
 ## Current Focus
-- Implementing core Win32 taskbar discovery logic.
-- Building the WPF overlay and configuration UI.
+- See [FEATURES.md](FEATURES.md) Tier 1 — production overlay, settings UI, Win11 grouping, ship path.

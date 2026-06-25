@@ -28,3 +28,31 @@ graph TD
 3.  **Enumerate Buttons**: Each direct child of `MSTaskListWClass` represents an app button cluster.
 4.  **Reposition**: (Best-effort) Use `SetWindowPos` to add pixel offsets matching the configured gaps.
 5.  **Overlay Sync**: The WPF window matches its dimensions to the taskbar rect and draws dividers at calculated offsets.
+
+## Project Layout (2026-06-25)
+| Path | Role |
+|------|------|
+| `App.xaml.cs` | Tray icon, overlay lifecycle, config load |
+| `Services/TaskbarService.cs` | Taskbar HWND discovery & button enumeration |
+| `Services/ConfigService.cs` | `%AppData%\TaskSplit\config.json` persistence |
+| `Win32/NativeMethods.cs` | P/Invoke wrappers (`FindWindow`, `EnumChildWindows`, `RECT`, etc.) |
+| `Views/TaskbarOverlay.xaml` | Transparent overlay (dividers & labels) |
+| `launch.bat` | Windows dev launcher (`dotnet run`; prepends SDK path for Explorer sessions) |
+
+---
+
+## [AMENDED 2026-06-25]: Product name & extended layout
+
+**Product name:** Task-Split (user-facing). Assembly/namespace remains `TaskSplit`.
+
+Additional components since initial layout:
+
+| Path | Role |
+|------|------|
+| `Services/AppDiscoveryService.cs` | System exe index + search/browse |
+| `Views/AddAppDialog.xaml` | Add-app search UI |
+| `Models/DiscoveredApp.cs` | Search result model |
+| `Models/OverlayDiagnostics.cs` | Debug overlay report |
+| `DOCS/FEATURES.md` | Prioritized roadmap & possible features |
+
+Planned work: see [FEATURES.md](FEATURES.md).

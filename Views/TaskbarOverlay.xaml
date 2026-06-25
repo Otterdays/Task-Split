@@ -1,14 +1,96 @@
 <Window x:Class="TaskSplit.Views.TaskbarOverlay"
-        xmlns="http://schemas.microsoft.com/winfx/2000/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2000/xaml"
-        Title="TaskSplit Overlay"
-        Background="Transparent"
-        AllowsTransparency="True"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Task-Split Overlay"
+        Background="#FF252526"
+        AllowsTransparency="False"
         WindowStyle="None"
         ShowInTaskbar="False"
+        ShowActivated="False"
         Topmost="True"
-        IsHitTestVisible="False">
-    <Canvas x:Name="OverlayCanvas">
-        <!-- Dividers and Labels will be rendered here programmatically -->
-    </Canvas>
+        MinWidth="160"
+        MinHeight="64"
+        ResizeMode="CanResize">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="#FF1A1A1C"
+                BorderBrush="#33FFFFFF"
+                BorderThickness="0,0,0,1"
+                Padding="8,3">
+            <Grid>
+                <StackPanel Orientation="Horizontal"
+                            VerticalAlignment="Center"
+                            IsHitTestVisible="False">
+                    <TextBlock Text="Task"
+                               FontFamily="Segoe UI"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               Foreground="#E6FFFFFF"
+                               VerticalAlignment="Center" />
+                    <TextBlock Text="-Split"
+                               FontFamily="Segoe UI"
+                               FontSize="10"
+                               FontWeight="Bold"
+                               Foreground="#FF5B8CFF"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+
+                <TextBlock x:Name="HintText"
+                           Text="drag · resize"
+                           FontFamily="Segoe UI"
+                           FontSize="8"
+                           Foreground="#55FFFFFF"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Right"
+                           IsHitTestVisible="False" />
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Margin="8,6,8,8">
+            <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False" />
+
+            <Button x:Name="AddAppButton"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Padding="8,4"
+                    Cursor="Hand"
+                    Background="#FF2A2A2E"
+                    BorderBrush="#FF5B8CFF"
+                    BorderThickness="1"
+                    Click="AddAppButton_Click">
+                <StackPanel Orientation="Horizontal">
+                    <Border Width="14"
+                            Height="14"
+                            CornerRadius="7"
+                            Background="#FF5B8CFF"
+                            VerticalAlignment="Center">
+                        <TextBlock Text="+"
+                                   FontSize="11"
+                                   FontWeight="Bold"
+                                   Foreground="White"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="0,-1,0,0" />
+                    </Border>
+                    <TextBlock Text="Add App"
+                               Margin="6,0,0,0"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               Foreground="White"
+                               VerticalAlignment="Center" />
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <Border Grid.RowSpan="2"
+                BorderBrush="White"
+                BorderThickness="2"
+                Background="Transparent"
+                IsHitTestVisible="False" />
+    </Grid>
 </Window>

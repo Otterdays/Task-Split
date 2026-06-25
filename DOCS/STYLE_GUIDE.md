@@ -16,3 +16,15 @@
 - Avoid `null` whenever possible. Use `?` for nullable types and handle nullability explicitly.
 - Use `Expression-bodied members` (e.g., `=>`) for short properties and methods.
 - Document all public APIs with `<summary>` tags.
+
+## Product naming (2026-06-25)
+
+| Context | Use |
+|---------|-----|
+| User-facing UI, README, docs titles | **Task-Split** |
+| GitHub repository | `Task-Split` |
+| C# namespace / assembly / `.csproj` | `TaskSplit` (unchanged) |
+| Config folder | `%AppData%\TaskSplit` (legacy path) |
+| Built executable | `TaskSplit.exe` |
+
+Do not rename the `TaskSplit` namespace unless doing a deliberate assembly rename.
