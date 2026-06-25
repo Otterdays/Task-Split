@@ -1,6 +1,10 @@
 <!-- PRESERVATION RULE: Never delete or replace content. Append or annotate only. -->
 # Changelog: Task-Split Project
 
+## [0.1.8] - 2026-06-25
+### Documentation
+- Documented **hardcoded first-run config** — `ConfigService.CreateDefault()` seeds Work / Browser / Chat groups with preset process names; clarified distinction from **+ Add App** system discovery (`README`, `ARCHITECTURE`, `FEATURES`).
+
 ## [0.1.7] - 2026-06-25
 ### Added
 - **Overlay tooltips** — app chips show process name, running state, taskbar window title, and click action; group headers show app count and gap; title bar and **+ Add App** have usage hints. Dark-themed tooltip styling matches overlay chrome.

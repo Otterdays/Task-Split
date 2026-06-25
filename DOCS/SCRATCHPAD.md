@@ -34,6 +34,7 @@
 
 ---
 ## RECENT ACTIONS
+- [x] 2026-06-25: **Docs** — documented hardcoded `CreateDefault()` seed groups (Work/Browser/Chat + preset process names) in README, ARCHITECTURE, FEATURES, CHANGELOG.
 - [x] 2026-06-25: **Tooltips** on overlay — app chips (process, status, taskbar title, action), group headers, title bar, Add App button.
 - [x] 2026-06-25: **Fix** app chip click-to-focus — UIA invoke + taskbar screen click + EnumWindows foreground; launch fallback for stopped apps.
 - [x] 2026-06-25: **Fix** overlay "always Hand cursor" — `ScrollViewer` no longer treated as clickable; window cursor only on resize/title zones; app chips clickable (`TryFocusApp`).

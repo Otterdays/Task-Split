@@ -17,6 +17,7 @@ What exists today:
 - Taskbar-aligned overlay (DPI-aware, drag/resize, manual layout lock)
 - Win32 taskbar discovery (`Shell_TrayWnd`, `MSTaskListWClass` + Win11 fallbacks)
 - Group config via JSON (`%AppData%\TaskSplit\config.json`)
+- **First-run default groups** — `ConfigService.CreateDefault()` hardcodes Work / Browser / Chat with preset process names (`code`, `devenv`, `chrome`, `firefox`, `msedge`, `discord`, `slack`, `teams`); not per-user discovery
 - **+ Add App** dialog with system scan + file search (`AppDiscoveryService`)
 - `launch.bat` dev launcher
 

@@ -51,7 +51,7 @@ graph LR
 |------|------|
 | `App.xaml.cs` | Tray icon, overlay lifecycle, config load |
 | `Services/TaskbarService.cs` | Taskbar HWND discovery & button enumeration |
-| `Services/ConfigService.cs` | `%AppData%\TaskSplit\config.json` persistence |
+| `Services/ConfigService.cs` | `%AppData%\TaskSplit\config.json` persistence; `CreateDefault()` seed |
 | `Win32/NativeMethods.cs` | P/Invoke wrappers (`FindWindow`, `EnumChildWindows`, `RECT`, etc.) |
 | `Views/TaskbarOverlay.xaml` | Overlay panel (groups list, Add App, resize grips, optional dividers) |
 | `launch.bat` | Windows dev launcher (`dotnet run`; prepends SDK path for Explorer sessions) |
@@ -80,3 +80,17 @@ Additional components since initial layout:
 | `DOCS/FEATURES.md` | Prioritized roadmap & possible features |
 
 Planned work: see [FEATURES.md](FEATURES.md).
+
+## [AMENDED 2026-06-25]: Default config seed (first run)
+
+`ConfigService.Load()` writes **hardcoded starter groups** when `%AppData%\TaskSplit\config.json` is missing or unreadable. This is **not** a system scan — every new user gets the same process-name list until they edit config or use **+ Add App**.
+
+| Group | Color | Preset `ProcessNames` |
+|-------|-------|------------------------|
+| Work | `#5B8CFF` | `code`, `devenv` |
+| Browser | `#FF7B72` | `chrome`, `firefox`, `msedge` |
+| Chat | `#56D364` | `discord`, `slack`, `teams` |
+
+Each group also gets `GapAfter: 32`. Chips appear in the overlay immediately; they only affect taskbar grouping when a matching process is running. **Add App** (`AppDiscoveryService`) is separate — it indexes the user's machine and does not change defaults unless the user saves.
+
+Source: `Services/ConfigService.cs` → `CreateDefault()`.

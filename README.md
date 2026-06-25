@@ -80,6 +80,18 @@ dotnet build -c Release
 5.  **Tray menu** — Show Overlay, **Snap to Taskbar**, Debug Overlay Info, Reset Taskbar Cache, Exit.
 6.  **Manual config** — edit `%AppData%\TaskSplit\config.json` (process names e.g. `chrome`, `code`, `cursor`).
 
+### First-run default groups
+
+On first launch (no config file yet), Task-Split seeds **hardcoded starter groups** — not apps discovered from your PC:
+
+| Group | Apps (process names) |
+|-------|-------------------------|
+| Work | `code`, `devenv` |
+| Browser | `chrome`, `firefox`, `msedge` |
+| Chat | `discord`, `slack`, `teams` |
+
+These names are written to `%AppData%\TaskSplit\config.json` automatically. Chips show in the overlay even if you don't use those apps; they only group on the taskbar when the process is running. Remove or edit groups in config, or use **+ Add App** to build your own layout.
+
 > [!TIP]
 > **Windows 11:** Taskbar buttons are discovered via **UI Automation** when classic HWND enumeration finds none. Check **Debug Overlay Info** — `Taskbar buttons` should be > 0. For physical icon repositioning, [ExplorerPatcher](https://github.com/valinet/ExplorerPatcher) may still help classic spacing APIs.
 
