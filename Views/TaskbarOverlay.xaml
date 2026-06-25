@@ -11,6 +11,43 @@
         MinWidth="160"
         MinHeight="180"
         ResizeMode="CanResize">
+    <Window.Resources>
+        <Style x:Key="TitleChromeButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="24" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Foreground" Value="#CCFFFFFF" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ChromeBtnBorder"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ChromeBtnBorder" Property="Background" Value="#555B8CFF" />
+                                <Setter Property="Foreground" Value="#FFFFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ChromeBtnBorder" Property="Background" Value="#775B8CFF" />
+                                <Setter Property="Foreground" Value="#FFFFFFFF" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -22,9 +59,10 @@
                 Background="#FF1A1A1C"
                 BorderBrush="#33FFFFFF"
                 BorderThickness="0,0,0,1"
-                Padding="8,3">
+                Padding="8,5">
             <Border.ToolTip>
-                <ToolTip Content="Drag to move · Pull sides or bottom edge to resize"
+                <ToolTip x:Name="TitleBarToolTip"
+                         Content="Drag to move · Pull sides or bottom edge to resize"
                          FontFamily="Segoe UI"
                          FontSize="11"
                          Background="#FF2A2A2E"
@@ -33,36 +71,120 @@
                          BorderThickness="1"
                          Padding="8,4,8,4" />
             </Border.ToolTip>
-            <Grid>
-                <StackPanel Orientation="Horizontal"
-                            VerticalAlignment="Center"
-                            IsHitTestVisible="False">
-                    <TextBlock Text="Task"
-                               FontFamily="Segoe UI"
-                               FontSize="10"
-                               FontWeight="SemiBold"
-                               Foreground="#E6FFFFFF"
-                               VerticalAlignment="Center" />
-                    <TextBlock Text="-Split"
-                               FontFamily="Segoe UI"
-                               FontSize="10"
-                               FontWeight="Bold"
-                               Foreground="#FF5B8CFF"
-                               VerticalAlignment="Center" />
-                </StackPanel>
+            <Grid x:Name="TitleBarGrid" VerticalAlignment="Center">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-                <TextBlock x:Name="HintText"
-                           Text="drag title · resize sides"
-                           FontFamily="Segoe UI"
-                           FontSize="8"
-                           Foreground="#55FFFFFF"
-                           VerticalAlignment="Center"
-                           HorizontalAlignment="Right"
-                           IsHitTestVisible="False" />
+                <Grid Grid.Column="0">
+                    <Border x:Name="TitleBarDragArea"
+                            Background="Transparent"
+                            MouseLeftButtonDown="OnTitleBarDragAreaMouseLeftButtonDown"
+                            MouseMove="OnTitleBarDragAreaMouseMove"
+                            MouseLeftButtonUp="OnTitleBarDragAreaMouseLeftButtonUp" />
+
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                IsHitTestVisible="False">
+                        <Border x:Name="BrandDot"
+                                Width="7"
+                                Height="7"
+                                CornerRadius="3.5"
+                                Background="#FF5B8CFF"
+                                VerticalAlignment="Center"
+                                Margin="0,0,7,0"
+                                Visibility="Collapsed" />
+                        <TextBlock Text="Task"
+                                   FontFamily="Segoe UI"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   Foreground="#E6FFFFFF"
+                                   VerticalAlignment="Center" />
+                        <TextBlock Text="-Split"
+                                   FontFamily="Segoe UI"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   Foreground="#FF5B8CFF"
+                                   VerticalAlignment="Center" />
+                        <TextBlock x:Name="CompactHint"
+                                   Text="compact"
+                                   FontFamily="Segoe UI"
+                                   FontSize="8"
+                                   FontWeight="SemiBold"
+                                   Foreground="#665B8CFF"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0,0,0"
+                                   Visibility="Collapsed" />
+                    </StackPanel>
+
+                    <TextBlock x:Name="HintText"
+                               Text="drag title · resize sides"
+                               FontFamily="Segoe UI"
+                               FontSize="8"
+                               Foreground="#55FFFFFF"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Right"
+                               Margin="0,0,8,0"
+                               IsHitTestVisible="False" />
+                </Grid>
+
+                <StackPanel Grid.Column="1"
+                            x:Name="ChromeButtons"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+                    <Button x:Name="CollapseButton"
+                            Style="{StaticResource TitleChromeButtonStyle}"
+                            Margin="0,0,2,0"
+                            Click="CollapseButton_Click"
+                            ToolTipService.ShowOnDisabled="True">
+                        <Button.ToolTip>
+                            <ToolTip Content="Collapse to title bar (stay on screen)"
+                                     FontFamily="Segoe UI"
+                                     FontSize="11"
+                                     Background="#FF2A2A2E"
+                                     Foreground="White"
+                                     BorderBrush="#55FFFFFF"
+                                     BorderThickness="1"
+                                     Padding="8,4,8,4" />
+                        </Button.ToolTip>
+                        <TextBlock x:Name="CollapseButtonGlyph"
+                                   Text="─"
+                                   FontFamily="Segoe UI"
+                                   FontSize="10"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Button>
+                    <Button x:Name="HideButton"
+                            Style="{StaticResource TitleChromeButtonStyle}"
+                            Click="HideButton_Click"
+                            ToolTipService.ShowOnDisabled="True">
+                        <Button.ToolTip>
+                            <ToolTip Content="Hide overlay (use tray icon to show again)"
+                                     FontFamily="Segoe UI"
+                                     FontSize="11"
+                                     Background="#FF2A2A2E"
+                                     Foreground="White"
+                                     BorderBrush="#55FFFFFF"
+                                     BorderThickness="1"
+                                     Padding="8,4,8,4" />
+                        </Button.ToolTip>
+                        <TextBlock Text="×"
+                                   FontFamily="Segoe UI"
+                                   FontSize="12"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="0,-1,0,0" />
+                    </Button>
+                </StackPanel>
             </Grid>
         </Border>
 
-        <Grid Grid.Row="1" Margin="8,6,8,8">
+        <Grid x:Name="MainContent"
+              Grid.Row="1"
+              Margin="8,6,8,8">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
@@ -127,9 +249,11 @@
             </ScrollViewer>
         </Grid>
 
-        <Border Grid.RowSpan="2"
+        <Border x:Name="ChromeBorder"
+                Grid.RowSpan="2"
                 BorderBrush="White"
                 BorderThickness="2"
+                CornerRadius="0"
                 Background="Transparent"
                 IsHitTestVisible="False" />
 
@@ -145,18 +269,17 @@
                 <Border.Background>
                     <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
                         <GradientStop Color="#005B8CFF" Offset="0" />
-                        <GradientStop Color="#885B8CFF" Offset="0.55" />
-                        <GradientStop Color="#FF5B8CFF" Offset="1" />
+                        <GradientStop Color="#665B8CFF" Offset="0.7" />
+                        <GradientStop Color="#CC5B8CFF" Offset="1" />
                     </LinearGradientBrush>
                 </Border.Background>
                 <Line x:Name="LeftGripDash"
                       Y1="0"
-                      Stroke="#FFFFFFFF"
-                      StrokeThickness="2"
-                      StrokeDashArray="4 3"
+                      Stroke="#BBFFFFFF"
+                      StrokeThickness="1.5"
+                      StrokeDashArray="3 4"
                       VerticalAlignment="Center"
-                      HorizontalAlignment="Center"
-                      Opacity="0.85" />
+                      HorizontalAlignment="Center" />
             </Border>
 
             <Border x:Name="RightGrip"
@@ -166,41 +289,53 @@
                 <Border.Background>
                     <LinearGradientBrush StartPoint="1,0.5" EndPoint="0,0.5">
                         <GradientStop Color="#005B8CFF" Offset="0" />
-                        <GradientStop Color="#885B8CFF" Offset="0.55" />
-                        <GradientStop Color="#FF5B8CFF" Offset="1" />
+                        <GradientStop Color="#665B8CFF" Offset="0.7" />
+                        <GradientStop Color="#CC5B8CFF" Offset="1" />
                     </LinearGradientBrush>
                 </Border.Background>
                 <Line x:Name="RightGripDash"
                       Y1="0"
-                      Stroke="#FFFFFFFF"
-                      StrokeThickness="2"
-                      StrokeDashArray="4 3"
+                      Stroke="#BBFFFFFF"
+                      StrokeThickness="1.5"
+                      StrokeDashArray="3 4"
                       VerticalAlignment="Center"
-                      HorizontalAlignment="Center"
-                      Opacity="0.85" />
+                      HorizontalAlignment="Center" />
             </Border>
 
             <Border x:Name="BottomGrip"
                     VerticalAlignment="Bottom"
                     HorizontalAlignment="Stretch"
+                    Background="Transparent"
                     Opacity="0">
-                <Border.Background>
-                    <LinearGradientBrush StartPoint="0.5,1" EndPoint="0.5,0">
-                        <GradientStop Color="#005B8CFF" Offset="0" />
-                        <GradientStop Color="#885B8CFF" Offset="0.55" />
-                        <GradientStop Color="#FF5B8CFF" Offset="1" />
-                    </LinearGradientBrush>
-                </Border.Background>
                 <Line x:Name="BottomGripDash"
                       X1="0"
                       Y1="0"
-                      Stroke="#FFFFFFFF"
+                      Stroke="#CC5B8CFF"
                       StrokeThickness="2"
                       StrokeDashArray="4 3"
                       VerticalAlignment="Center"
-                      HorizontalAlignment="Center"
-                      Opacity="0.85" />
+                      HorizontalAlignment="Center" />
             </Border>
+
+            <Ellipse x:Name="BottomLeftCornerGrip"
+                     Width="6"
+                     Height="6"
+                     Fill="#CC5B8CFF"
+                     HorizontalAlignment="Left"
+                     VerticalAlignment="Bottom"
+                     Margin="4,0,0,4"
+                     Opacity="0"
+                     IsHitTestVisible="False" />
+
+            <Ellipse x:Name="BottomRightCornerGrip"
+                     Width="6"
+                     Height="6"
+                     Fill="#CC5B8CFF"
+                     HorizontalAlignment="Right"
+                     VerticalAlignment="Bottom"
+                     Margin="0,0,4,4"
+                     Opacity="0"
+                     IsHitTestVisible="False" />
         </Grid>
     </Grid>
 </Window>

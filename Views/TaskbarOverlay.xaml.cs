@@ -19,16 +19,17 @@ namespace TaskSplit.Views;
 public partial class TaskbarOverlay : Window
 {
     private const double DefaultPanelHeight = 220;
+    private const double CompactBarHeight = 38;
     private const double TaskbarStripMaxHeight = 96;
+    private const int VisibilityTransitionMs = 200;
+    private const int HideFadeMs = 140;
 
     private const double ResizeBorderHorizontal = 10;
     private const double ResizeBorderBottom = 12;
 
     private const int WM_NCHITTEST = 0x0084;
     private const int WM_NCMOUSELEAVE = 0x02A2;
-    private const int WM_MOUSELEAVE = 0x02A3;
     private const int HTCLIENT = 1;
-    private const int HTCAPTION = 2;
     private const int HTLEFT = 10;
     private const int HTRIGHT = 11;
     private const int HTBOTTOM = 15;
@@ -41,10 +42,21 @@ public partial class TaskbarOverlay : Window
     private AppConfig? _config;
     private string _positionMode = "uninitialized";
     private bool _manualLayout;
+    private bool _suppressManualLayoutCapture;
     private bool _applyingAutoLayout;
     private HwndSource? _hwndSource;
     private DispatcherTimer? _refreshDebounce;
     private ResizeZone _activeGripZone = ResizeZone.None;
+    private bool _trackingMouseLeave;
+    private bool _trackingNcMouseLeave;
+    private bool _sizingWindow;
+    private bool _draggingWindow;
+    private bool _titleDragArmed;
+    private Point? _titleDragOrigin;
+    private bool _lastInTitleBarBand;
+    private bool _lastOverChromeButton;
+    private ResizeZone _lastCursorZone = (ResizeZone)(-1);
+    private bool _lastChromeButtonCursor;
 
     public bool IsManualLayout => _manualLayout;
 
@@ -68,11 +80,477 @@ public partial class TaskbarOverlay : Window
         SourceInitialized += OnSourceInitialized;
         LocationChanged += OnLocationChangedByUser;
         SizeChanged += OnSizeChangedByUser;
-        MouseMove += OnMouseMove;
-        MouseLeave += (_, _) => UpdateGripFromZone(ResizeZone.None);
+        MouseMove += OnWindowMouseMove;
     }
 
+    private void OnWindowMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_sizingWindow || _draggingWindow || _applyingAutoLayout) return;
+        SyncResizeCursor(GetResizeZone(e.GetPosition(this)), e.GetPosition(this));
+    }
+
+    private void OnTitleBarDragAreaMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left) return;
+
+        if (e.ClickCount == 2 && _visibilityMode == OverlayVisibilityMode.Compact)
+        {
+            SetVisibilityMode(OverlayVisibilityMode.Expanded);
+            CancelTitleDragArm();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.ClickCount != 1) return;
+
+        if (_visibilityMode == OverlayVisibilityMode.Compact)
+        {
+            _titleDragOrigin = e.GetPosition(this);
+            _titleDragArmed = true;
+            TitleBarDragArea.CaptureMouse();
+            e.Handled = true;
+            return;
+        }
+
+        StartTitleDrag();
+        e.Handled = true;
+    }
+
+    private void OnTitleBarDragAreaMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_titleDragArmed || e.LeftButton != MouseButtonState.Pressed || !_titleDragOrigin.HasValue)
+            return;
+
+        var point = e.GetPosition(this);
+        var delta = point - _titleDragOrigin.Value;
+        if (Math.Abs(delta.X) < 3 && Math.Abs(delta.Y) < 3)
+            return;
+
+        StartTitleDrag();
+    }
+
+    private void OnTitleBarDragAreaMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || !_titleDragArmed) return;
+        CancelTitleDragArm();
+    }
+
+    private void StartTitleDrag()
+    {
+        CancelTitleDragArm();
+        _draggingWindow = true;
+        try
+        {
+            DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+            // primary button already released before DragMove
+        }
+        finally
+        {
+            _draggingWindow = false;
+        }
+    }
+
+    private void CancelTitleDragArm()
+    {
+        _titleDragArmed = false;
+        _titleDragOrigin = null;
+        if (TitleBarDragArea.IsMouseCaptured)
+            TitleBarDragArea.ReleaseMouseCapture();
+    }
+
+    private void CollapseButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetVisibilityMode(_visibilityMode == OverlayVisibilityMode.Compact
+            ? OverlayVisibilityMode.Expanded
+            : OverlayVisibilityMode.Compact);
+    }
+
+    private void HideButton_Click(object sender, RoutedEventArgs e) =>
+        SetVisibilityMode(OverlayVisibilityMode.Hidden);
+
     private enum ResizeZone { None, Left, Right, Bottom, BottomLeft, BottomRight, TitleBar }
+
+    private enum AppPresence { Running, Installed, NotFound }
+
+    private int _refreshCount;
+    private OverlayVisibilityMode _visibilityMode = OverlayVisibilityMode.Expanded;
+    private OverlayVisibilityMode _lastVisibleMode = OverlayVisibilityMode.Expanded;
+    private double? _savedExpandedHeight;
+    private bool _visibilityAnimating;
+    private Storyboard? _visibilityStoryboard;
+
+    public OverlayVisibilityMode VisibilityMode => _visibilityMode;
+    public bool IsVisibilityAnimating => _visibilityAnimating;
+
+    public event Action? VisibilityModeChanged;
+
+    public void SetVisibilityMode(OverlayVisibilityMode mode, bool animate = true)
+    {
+        if (mode == _visibilityMode && (mode != OverlayVisibilityMode.Hidden || IsVisible))
+            return;
+
+        if (mode == OverlayVisibilityMode.Compact
+            && _visibilityMode == OverlayVisibilityMode.Expanded
+            && Height > CompactBarHeight + 4)
+        {
+            _savedExpandedHeight = Height;
+        }
+
+        if (mode != OverlayVisibilityMode.Hidden)
+            _lastVisibleMode = mode;
+
+        var previousMode = _visibilityMode;
+        _visibilityMode = mode;
+
+        if (!animate || !IsLoaded)
+        {
+            ApplyVisibilityModeInstant(mode, previousMode);
+            return;
+        }
+
+        StopVisibilityAnimation();
+
+        switch (mode)
+        {
+            case OverlayVisibilityMode.Hidden:
+                AnimateHide();
+                return;
+            case OverlayVisibilityMode.Compact when previousMode == OverlayVisibilityMode.Hidden:
+            case OverlayVisibilityMode.Expanded when previousMode == OverlayVisibilityMode.Hidden:
+                AnimateShow(mode);
+                return;
+            case OverlayVisibilityMode.Compact when previousMode == OverlayVisibilityMode.Expanded && IsVisible:
+                AnimateCollapse();
+                return;
+            case OverlayVisibilityMode.Expanded when previousMode == OverlayVisibilityMode.Compact && IsVisible:
+                AnimateExpand();
+                return;
+            default:
+                ApplyVisibilityModeInstant(mode, previousMode);
+                break;
+        }
+    }
+
+    private void ApplyVisibilityModeInstant(OverlayVisibilityMode mode, OverlayVisibilityMode previousMode)
+    {
+        StopVisibilityAnimation();
+
+        switch (mode)
+        {
+            case OverlayVisibilityMode.Hidden:
+                Opacity = _config?.OverlayOpacity ?? 1.0;
+                Hide();
+                VisibilityModeChanged?.Invoke();
+                return;
+            case OverlayVisibilityMode.Compact:
+                ApplyCompactLayout();
+                break;
+            case OverlayVisibilityMode.Expanded:
+                ApplyExpandedLayout();
+                break;
+        }
+
+        if (!IsVisible)
+            Show();
+
+        Opacity = _config?.OverlayOpacity ?? 1.0;
+        MainContent.Opacity = 1.0;
+        EnsureTopmost();
+        UpdateGripDashSizes();
+        Refresh();
+        VisibilityModeChanged?.Invoke();
+    }
+
+    private void AnimateHide()
+    {
+        BeginVisibilityTransition();
+        var fromOpacity = _config?.OverlayOpacity ?? Opacity;
+        var fade = CreateEaseAnimation(fromOpacity, 0, HideFadeMs);
+        fade.Completed += (_, _) =>
+        {
+            StopVisibilityAnimation();
+            Opacity = _config?.OverlayOpacity ?? 1.0;
+            Hide();
+            EndVisibilityTransition();
+            VisibilityModeChanged?.Invoke();
+        };
+        BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void AnimateCollapse()
+    {
+        BeginVisibilityTransition();
+        ApplyCompactChrome();
+
+        var startHeight = Height;
+        var targetHeight = CompactBarHeight;
+        var startTop = Top;
+        var targetTop = startTop + (startHeight - targetHeight);
+
+        MainContent.Visibility = Visibility.Visible;
+        var contentFade = CreateEaseAnimation(1, 0, (int)(VisibilityTransitionMs * 0.55));
+        Storyboard.SetTarget(contentFade, MainContent);
+        Storyboard.SetTargetProperty(contentFade, new PropertyPath(UIElement.OpacityProperty));
+
+        var heightAnim = CreateEaseAnimation(startHeight, targetHeight, VisibilityTransitionMs);
+        Storyboard.SetTarget(heightAnim, this);
+        Storyboard.SetTargetProperty(heightAnim, new PropertyPath(HeightProperty));
+
+        var topAnim = CreateEaseAnimation(startTop, targetTop, VisibilityTransitionMs);
+        Storyboard.SetTarget(topAnim, this);
+        Storyboard.SetTargetProperty(topAnim, new PropertyPath(TopProperty));
+
+        RunVisibilityStoryboard(() => CompleteVisibilityAnimation(), contentFade, heightAnim, topAnim);
+    }
+
+    private void AnimateExpand()
+    {
+        BeginVisibilityTransition();
+        ApplyExpandedChrome();
+        MaxHeight = double.PositiveInfinity;
+        MinHeight = 180;
+
+        var targetHeight = Math.Max(MinHeight, _savedExpandedHeight ?? DefaultPanelHeight);
+        var startHeight = Height;
+        var startTop = Top;
+        var targetTop = startTop + (startHeight - targetHeight);
+
+        MainContent.Visibility = Visibility.Visible;
+        MainContent.Opacity = 0;
+        ResizeGripLayer.Visibility = Visibility.Visible;
+
+        var contentFade = CreateEaseAnimation(0, 1, (int)(VisibilityTransitionMs * 0.75));
+        Storyboard.SetTarget(contentFade, MainContent);
+        Storyboard.SetTargetProperty(contentFade, new PropertyPath(UIElement.OpacityProperty));
+
+        var heightAnim = CreateEaseAnimation(startHeight, targetHeight, VisibilityTransitionMs);
+        Storyboard.SetTarget(heightAnim, this);
+        Storyboard.SetTargetProperty(heightAnim, new PropertyPath(HeightProperty));
+
+        var topAnim = CreateEaseAnimation(startTop, targetTop, VisibilityTransitionMs);
+        Storyboard.SetTarget(topAnim, this);
+        Storyboard.SetTargetProperty(topAnim, new PropertyPath(TopProperty));
+
+        RunVisibilityStoryboard(() => CompleteVisibilityAnimation(), contentFade, heightAnim, topAnim);
+    }
+
+    private void AnimateShow(OverlayVisibilityMode mode)
+    {
+        BeginVisibilityTransition();
+
+        if (mode == OverlayVisibilityMode.Compact)
+            ApplyCompactLayout();
+        else
+            ApplyExpandedLayout();
+
+        Opacity = 0;
+        Show();
+        EnsureTopmost();
+
+        var fade = CreateEaseAnimation(0, _config?.OverlayOpacity ?? 1.0, HideFadeMs + 40);
+        fade.Completed += (_, _) =>
+        {
+            StopVisibilityAnimation();
+            Opacity = _config?.OverlayOpacity ?? 1.0;
+            CompleteVisibilityAnimation();
+        };
+        BeginAnimation(OpacityProperty, fade);
+    }
+
+    private void CompleteVisibilityAnimation()
+    {
+        var finalTop = Top;
+        var finalHeight = Height;
+        StopVisibilityAnimation();
+        Top = finalTop;
+        Height = finalHeight;
+
+        if (_visibilityMode == OverlayVisibilityMode.Compact)
+        {
+            MainContent.Opacity = 0;
+            MainContent.Visibility = Visibility.Collapsed;
+            ResizeGripLayer.Visibility = Visibility.Collapsed;
+            MinHeight = CompactBarHeight;
+            MaxHeight = CompactBarHeight;
+            Height = CompactBarHeight;
+            Top = finalTop + (finalHeight - CompactBarHeight);
+        }
+        else
+        {
+            MainContent.Opacity = 1;
+            MainContent.Visibility = Visibility.Visible;
+        }
+
+        UpdateGripDashSizes();
+        Refresh();
+        EndVisibilityTransition();
+        VisibilityModeChanged?.Invoke();
+        if (!_manualLayout)
+            SyncToTaskbar();
+    }
+
+    private void BeginVisibilityTransition()
+    {
+        _visibilityAnimating = true;
+        _suppressManualLayoutCapture = true;
+        _applyingAutoLayout = true;
+        CancelTitleDragArm();
+        ClearResizeHoverFx(immediate: true);
+    }
+
+    private void EndVisibilityTransition()
+    {
+        _visibilityAnimating = false;
+        _applyingAutoLayout = false;
+        Dispatcher.BeginInvoke(
+            () => _suppressManualLayoutCapture = false,
+            DispatcherPriority.ApplicationIdle);
+    }
+
+    private void StopVisibilityAnimation()
+    {
+        _visibilityStoryboard?.Stop();
+        _visibilityStoryboard = null;
+        BeginAnimation(HeightProperty, null);
+        BeginAnimation(TopProperty, null);
+        BeginAnimation(OpacityProperty, null);
+        MainContent.BeginAnimation(UIElement.OpacityProperty, null);
+    }
+
+    private void RunVisibilityStoryboard(Action onComplete, params DoubleAnimation[] animations)
+    {
+        var sb = new Storyboard { Duration = TimeSpan.FromMilliseconds(VisibilityTransitionMs) };
+        foreach (var anim in animations)
+            sb.Children.Add(anim);
+
+        sb.Completed += (_, _) => onComplete();
+        _visibilityStoryboard = sb;
+        sb.Begin();
+    }
+
+    private static DoubleAnimation CreateEaseAnimation(double from, double to, int ms) =>
+        new(from, to, TimeSpan.FromMilliseconds(ms))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
+            FillBehavior = FillBehavior.HoldEnd,
+        };
+
+    public void RestoreFromHidden() =>
+        SetVisibilityMode(_lastVisibleMode);
+
+    public void ToggleHidden()
+    {
+        if (_visibilityMode == OverlayVisibilityMode.Hidden)
+            RestoreFromHidden();
+        else
+            SetVisibilityMode(OverlayVisibilityMode.Hidden);
+    }
+
+    public void ToggleCompact()
+    {
+        if (_visibilityMode == OverlayVisibilityMode.Hidden)
+            SetVisibilityMode(OverlayVisibilityMode.Compact);
+        else
+            SetVisibilityMode(_visibilityMode == OverlayVisibilityMode.Compact
+                ? OverlayVisibilityMode.Expanded
+                : OverlayVisibilityMode.Compact);
+    }
+
+    private void ApplyCompactLayout()
+    {
+        ClearResizeHoverFx(immediate: true);
+        ApplyCompactChrome();
+        MainContent.Visibility = Visibility.Collapsed;
+        MainContent.Opacity = 0;
+        ResizeGripLayer.Visibility = Visibility.Collapsed;
+
+        // Measure actual required height for compact content to avoid clipping
+        TitleBarBorder.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var requiredHeight = TitleBarBorder.DesiredSize.Height;
+        var compactHeight = Math.Max(CompactBarHeight, Math.Min(50, requiredHeight));
+
+        MinHeight = compactHeight;
+        MaxHeight = compactHeight;
+        Height = compactHeight;
+    }
+
+    private void ApplyCompactChrome()
+    {
+        HintText.Visibility = Visibility.Collapsed;
+        CompactHint.Visibility = Visibility.Visible;
+        BrandDot.Visibility = Visibility.Visible;
+
+        Background = CompactBackground;
+        TitleBarBorder.Background = CompactBackground;
+        TitleBarBorder.BorderBrush = CompactAccentBrush;
+        TitleBarBorder.BorderThickness = new Thickness(3, 0, 0, 0);
+        TitleBarBorder.Padding = new Thickness(10, 0, 6, 0);
+
+        ChromeBorder.BorderBrush = CompactChromeBrush;
+        ChromeBorder.BorderThickness = new Thickness(1);
+        ChromeBorder.CornerRadius = new CornerRadius(8);
+        ChromeBorder.Margin = new Thickness(0);
+
+        Grid.SetRowSpan(TitleBarBorder, 2);
+        TitleBarGrid.VerticalAlignment = VerticalAlignment.Center;
+
+        CollapseButtonGlyph.Text = "⤢";
+        CollapseButtonGlyph.FontSize = 11;
+        ToolTipService.SetToolTip(CollapseButton, MakeTooltip("Expand panel"));
+        ToolTipService.SetToolTip(TitleBarBorder, MakeTooltip("Drag to move · Double-click to expand"));
+    }
+
+    private void ApplyExpandedLayout()
+    {
+        ApplyExpandedChrome();
+        MainContent.Visibility = Visibility.Visible;
+        MainContent.Opacity = 1;
+        ResizeGripLayer.Visibility = Visibility.Visible;
+        MaxHeight = double.PositiveInfinity;
+        MinHeight = 180;
+        Height = Math.Max(MinHeight, _savedExpandedHeight ?? DefaultPanelHeight);
+    }
+
+    private void ApplyExpandedChrome()
+    {
+        HintText.Visibility = Visibility.Visible;
+        CompactHint.Visibility = Visibility.Collapsed;
+        BrandDot.Visibility = Visibility.Collapsed;
+
+        Background = ExpandedBackground;
+        TitleBarBorder.Background = ExpandedTitleBackground;
+        TitleBarBorder.BorderBrush = TitleDividerBrush;
+        TitleBarBorder.BorderThickness = new Thickness(0, 0, 0, 1);
+        TitleBarBorder.Padding = new Thickness(8, 5, 8, 5);
+
+        ChromeBorder.BorderBrush = Brushes.White;
+        ChromeBorder.BorderThickness = new Thickness(2);
+        ChromeBorder.CornerRadius = new CornerRadius(0);
+        ChromeBorder.Margin = new Thickness(0);
+
+        Grid.SetRowSpan(TitleBarBorder, 1);
+        TitleBarGrid.VerticalAlignment = VerticalAlignment.Center;
+
+        HintText.Text = "drag title · resize sides";
+        CollapseButtonGlyph.Text = "─";
+        CollapseButtonGlyph.FontSize = 10;
+        ToolTipService.SetToolTip(CollapseButton, MakeTooltip("Collapse to title bar (stay on screen)"));
+        ToolTipService.SetToolTip(TitleBarBorder, MakeTooltip("Drag to move · Pull sides or bottom edge to resize"));
+    }
+
+    private static readonly Brush TitleBarHoverExpanded =
+        new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x26));
+    private static readonly Brush TitleBarHoverCompact =
+        new SolidColorBrush(Color.FromRgb(0x26, 0x26, 0x2C));
+    private static readonly Brush CompactBackground = new SolidColorBrush(Color.FromRgb(0x1C, 0x1C, 0x1F));
+    private static readonly Brush ExpandedBackground = new SolidColorBrush(Color.FromRgb(0x25, 0x25, 0x26));
+    private static readonly Brush ExpandedTitleBackground = new SolidColorBrush(Color.FromRgb(0x1A, 0x1A, 0x1C));
+    private static readonly Brush TitleDividerBrush = new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF));
+    private static readonly Brush CompactAccentBrush = new SolidColorBrush(Color.FromRgb(0x5B, 0x8C, 0xFF));
+    private static readonly Brush CompactChromeBrush = new SolidColorBrush(Color.FromArgb(0x66, 0x5B, 0x8C, 0xFF));
 
     public void UpdateConfig(AppConfig config)
     {
@@ -83,8 +561,44 @@ public partial class TaskbarOverlay : Window
 
     public void SnapToTaskbar()
     {
+        // NOTE: WPF can raise LocationChanged/SizeChanged after ApplyPhysicalRect returns,
+        // which used to immediately re-lock manual layout and break snap on the next timer tick.
+        _suppressManualLayoutCapture = true;
         _manualLayout = false;
+        EnsureVisibleExpandedForSnap(animate: false);
         SyncToTaskbar();
+        Dispatcher.BeginInvoke(
+            () => _suppressManualLayoutCapture = false,
+            DispatcherPriority.ApplicationIdle);
+    }
+
+    /// <summary>Shows overlay expanded above taskbar — used by tray double-click and snap.</summary>
+    public void RestoreFromTray()
+    {
+        _suppressManualLayoutCapture = true;
+        _manualLayout = false;
+        var wasHidden = _visibilityMode == OverlayVisibilityMode.Hidden;
+        EnsureVisibleExpandedForSnap(animate: !wasHidden);
+        SyncToTaskbar();
+        Dispatcher.BeginInvoke(
+            () => _suppressManualLayoutCapture = false,
+            DispatcherPriority.ApplicationIdle);
+
+        // Don't activate/focus — just show the window.
+        // Let the user click it if they want to interact.
+        // This prevents stealing focus from their current work.
+
+        VisibilityModeChanged?.Invoke();
+    }
+
+    private void EnsureVisibleExpandedForSnap(bool animate = false)
+    {
+        if (_visibilityMode == OverlayVisibilityMode.Hidden)
+            SetVisibilityMode(OverlayVisibilityMode.Expanded, animate);
+        else if (_visibilityMode == OverlayVisibilityMode.Compact)
+            SetVisibilityMode(OverlayVisibilityMode.Expanded, animate);
+        else if (!IsVisible)
+            Show();
     }
 
     private void AddAppButton_Click(object sender, RoutedEventArgs e)
@@ -92,11 +606,20 @@ public partial class TaskbarOverlay : Window
         if (_config == null) return;
 
         var dialog = new AddAppDialog(_config, _appDiscovery) { Owner = this };
-        if (dialog.ShowDialog() != true || dialog.UpdatedConfig == null)
+        dialog.ShowDialog();
+
+        if (dialog.UpdatedConfig == null)
             return;
 
         _config = dialog.UpdatedConfig;
-        _configService.Save(_config);
+        if (!_configService.Save(_config))
+        {
+            MessageBox.Show(
+                "Failed to save settings. Please check that the config directory is accessible.",
+                "Save Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
         ConfigChanged?.Invoke(_config);
         Refresh();
     }
@@ -111,18 +634,50 @@ public partial class TaskbarOverlay : Window
     {
         UpdateGripDashSizes();
         SyncToTaskbar();
+        _ = WarmDiscoveryAndRefreshAsync();
+    }
+
+    private async Task WarmDiscoveryAndRefreshAsync()
+    {
+        try
+        {
+            await _appDiscovery.WarmIndexAsync().ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(Refresh);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[TaskSplit] App discovery warm failed: {ex.Message}");
+        }
+    }
+
+    private async Task RefreshDiscoveryIndexAsync()
+    {
+        try
+        {
+            await _appDiscovery.RefreshIndexAsync().ConfigureAwait(false);
+            await Dispatcher.InvokeAsync(() =>
+            {
+                OverlayCanvas.Children.Clear();
+                RenderGroupsPanel();
+                RenderTaskbarDividers();
+            });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[TaskSplit] App discovery refresh failed: {ex.Message}");
+        }
     }
 
     private void OnLocationChangedByUser(object? sender, EventArgs e)
     {
-        if (_applyingAutoLayout || !IsLoaded) return;
+        if (_applyingAutoLayout || _suppressManualLayoutCapture || !IsLoaded) return;
         _manualLayout = true;
         _positionMode = "manual (drag/resize)";
     }
 
     private void OnSizeChangedByUser(object? sender, SizeChangedEventArgs e)
     {
-        if (_applyingAutoLayout || !IsLoaded) return;
+        if (_applyingAutoLayout || _suppressManualLayoutCapture || !IsLoaded) return;
         _manualLayout = true;
         _positionMode = "manual (drag/resize)";
         UpdateGripDashSizes();
@@ -144,18 +699,10 @@ public partial class TaskbarOverlay : Window
         Refresh();
     }
 
-    private void OnMouseMove(object sender, MouseEventArgs e)
-    {
-        if (_applyingAutoLayout) return;
-        var point = e.GetPosition(this);
-        var zone = GetResizeZone(point);
-        UpdateGripFromZone(zone);
-        // Only override cursor for resize/title zones — client controls set their own Hand cursor.
-        Cursor = zone == ResizeZone.None ? null : ResolveCursor(zone);
-    }
-
     public void SyncToTaskbar()
     {
+        if (_visibilityAnimating) return;
+
         if (!_manualLayout)
         {
             var rect = _taskbarService.GetTaskbarRect();
@@ -186,9 +733,31 @@ public partial class TaskbarOverlay : Window
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (msg is WM_NCMOUSELEAVE or WM_MOUSELEAVE)
+        if (msg == NativeMethods.WM_ENTERSIZEMOVE)
         {
-            UpdateGripFromZone(ResizeZone.None);
+            _sizingWindow = true;
+            ClearResizeHoverFx(immediate: true);
+            return IntPtr.Zero;
+        }
+
+        if (msg == NativeMethods.WM_EXITSIZEMOVE)
+        {
+            _sizingWindow = false;
+            UpdateHoverState(ResizeZone.None);
+            return IntPtr.Zero;
+        }
+
+        if (msg == WM_NCMOUSELEAVE)
+        {
+            _trackingNcMouseLeave = false;
+            UpdateHoverState(ResizeZone.None);
+            return IntPtr.Zero;
+        }
+
+        if (msg == NativeMethods.WM_MOUSELEAVE)
+        {
+            _trackingMouseLeave = false;
+            UpdateHoverState(ResizeZone.None);
             return IntPtr.Zero;
         }
 
@@ -205,30 +774,38 @@ public partial class TaskbarOverlay : Window
         var zone = GetResizeZone(point, width, height, borderH, borderBottom);
 
         // NC resize zones never raise WPF MouseMove — drive grip FX from hit-test.
-        UpdateGripFromZone(zone);
+        if (!_sizingWindow && !_draggingWindow)
+            UpdateHoverState(zone, point);
 
         switch (zone)
         {
             case ResizeZone.BottomLeft:
+                TrackNcMouseLeave(hwnd);
                 handled = true;
                 return (IntPtr)HTBOTTOMLEFT;
             case ResizeZone.BottomRight:
+                TrackNcMouseLeave(hwnd);
                 handled = true;
                 return (IntPtr)HTBOTTOMRIGHT;
             case ResizeZone.Left:
+                TrackNcMouseLeave(hwnd);
                 handled = true;
                 return (IntPtr)HTLEFT;
             case ResizeZone.Right:
+                TrackNcMouseLeave(hwnd);
                 handled = true;
                 return (IntPtr)HTRIGHT;
             case ResizeZone.Bottom:
+                TrackNcMouseLeave(hwnd);
                 handled = true;
                 return (IntPtr)HTBOTTOM;
             case ResizeZone.TitleBar:
-                handled = true;
-                return (IntPtr)HTCAPTION;
+                TrackClientMouseLeave(hwnd);
+                handled = false;
+                return (IntPtr)HTCLIENT;
             default:
                 handled = false;
+                TrackClientMouseLeave(hwnd);
                 return (IntPtr)HTCLIENT;
         }
     }
@@ -243,6 +820,17 @@ public partial class TaskbarOverlay : Window
     {
         if (width <= 0 || height <= 0) return ResizeZone.None;
 
+        borderH = Math.Min(borderH, Math.Max(4, (width - 24) / 2.0));
+        var titleH = GetTitleBarHeight();
+        borderBottom = Math.Min(borderBottom, Math.Max(4, height - titleH - 8));
+
+        if (_visibilityMode == OverlayVisibilityMode.Compact)
+        {
+            if (point.Y <= titleH && !IsInteractiveElement(point))
+                return ResizeZone.TitleBar;
+            return ResizeZone.None;
+        }
+
         var onLeft = point.X <= borderH;
         var onRight = point.X >= width - borderH;
         var onBottom = point.Y >= height - borderBottom;
@@ -253,7 +841,7 @@ public partial class TaskbarOverlay : Window
         if (onRight) return ResizeZone.Right;
         if (onBottom) return ResizeZone.Bottom;
 
-        if (point.Y <= GetTitleBarHeight() && !IsInteractiveElement(point))
+        if (point.Y <= titleH && !IsInteractiveElement(point))
             return ResizeZone.TitleBar;
 
         return ResizeZone.None;
@@ -262,36 +850,231 @@ public partial class TaskbarOverlay : Window
     private double GetTitleBarHeight() =>
         TitleBarBorder.ActualHeight > 0 ? TitleBarBorder.ActualHeight : 28;
 
-    private void UpdateGripFromZone(ResizeZone zone)
+    private bool CanShowResizeGrips() =>
+        _visibilityMode == OverlayVisibilityMode.Expanded
+        && !_visibilityAnimating
+        && !_sizingWindow
+        && ResizeGripLayer.Visibility == Visibility.Visible;
+
+    private void UpdateHoverState(ResizeZone zone, Point? point = null)
     {
-        if (zone == _activeGripZone) return;
+        if (_draggingWindow) return;
+
+        if (!point.HasValue)
+        {
+            _lastInTitleBarBand = false;
+            _lastOverChromeButton = false;
+        }
+        else
+        {
+            var inTitleBar = IsInTitleBarBand(point.Value);
+            var overChromeButton = IsTitleBarChromeButton(point.Value);
+            var zoneChanged = zone != _activeGripZone;
+            var chromeChanged = inTitleBar != _lastInTitleBarBand
+                || overChromeButton != _lastOverChromeButton;
+
+            if (!zoneChanged && zone != ResizeZone.None && !chromeChanged)
+                return;
+
+            _lastInTitleBarBand = inTitleBar;
+            _lastOverChromeButton = overChromeButton;
+        }
+
+        var gripZoneChanged = zone != _activeGripZone;
         _activeGripZone = zone;
 
-        void Apply() => SetResizeGripVisibility(zone);
+        if ((gripZoneChanged || zone == ResizeZone.None) && !_sizingWindow)
+        {
+            if (zone == ResizeZone.None)
+                ClearResizeGripVisuals(immediate: true);
+            else if (CanShowResizeGrips())
+                SetResizeGripVisibility(zone);
+            else
+                ClearResizeGripVisuals(immediate: true);
+        }
 
-        if (Dispatcher.CheckAccess()) Apply();
-        else Dispatcher.BeginInvoke(Apply);
+        ApplyResizeHoverChrome(zone, point);
+    }
+
+    private void ApplyResizeHoverChrome(ResizeZone zone, Point? point)
+    {
+        if (_sizingWindow || _draggingWindow) return;
+
+        var inTitleBar = point.HasValue && IsInTitleBarBand(point.Value);
+        SetTitleBarHover(inTitleBar);
+        SyncResizeCursor(zone, point);
+    }
+
+    private void SyncResizeCursor(ResizeZone zone, Point? point)
+    {
+        var overChromeButton = point.HasValue && IsTitleBarChromeButton(point.Value);
+
+        if (zone == _lastCursorZone
+            && overChromeButton == _lastChromeButtonCursor
+            && !IsResizeEdge(zone))
+        {
+            return;
+        }
+
+        _lastCursorZone = zone;
+        _lastChromeButtonCursor = overChromeButton;
+
+        // NC resize bands: Win32 sets cursor from HTLEFT/HTRIGHT/etc — clear WPF overrides.
+        if (IsResizeEdge(zone))
+        {
+            Mouse.OverrideCursor = null;
+            Cursor = null;
+            return;
+        }
+
+        Mouse.OverrideCursor = overChromeButton
+            ? Cursors.Hand
+            : zone == ResizeZone.TitleBar
+                ? Cursors.SizeAll
+                : null;
+        Cursor = null;
+    }
+
+    private static bool IsResizeEdge(ResizeZone zone) =>
+        zone is ResizeZone.Left or ResizeZone.Right or ResizeZone.Bottom
+            or ResizeZone.BottomLeft or ResizeZone.BottomRight;
+
+    private bool IsInTitleBarBand(Point point)
+    {
+        if (ActualWidth <= 0 || ActualHeight <= 0) return false;
+        if (_visibilityMode == OverlayVisibilityMode.Hidden) return false;
+        return point.Y >= 0 && point.Y <= GetTitleBarHeight();
+    }
+
+    private bool IsTitleBarChromeButton(Point point) =>
+        InputHitTest(point) is DependencyObject hit && IsDescendantOfChromeButton(hit);
+
+    private bool IsDescendantOfChromeButton(DependencyObject? source)
+    {
+        var current = source;
+        while (current != null)
+        {
+            if (ReferenceEquals(current, CollapseButton) || ReferenceEquals(current, HideButton))
+                return true;
+            if (ReferenceEquals(current, TitleBarBorder))
+                return false;
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return false;
+    }
+
+    private bool _titleBarHovered;
+
+    private void SetTitleBarHover(bool hovered)
+    {
+        if (_titleBarHovered == hovered) return;
+        _titleBarHovered = hovered;
+
+        TitleBarBorder.Background = hovered
+            ? (_visibilityMode == OverlayVisibilityMode.Compact
+                ? TitleBarHoverCompact
+                : TitleBarHoverExpanded)
+            : (_visibilityMode == OverlayVisibilityMode.Compact
+                ? CompactBackground
+                : ExpandedTitleBackground);
+    }
+
+    private void ClearResizeHoverFx(bool immediate = false)
+    {
+        _activeGripZone = ResizeZone.None;
+        _lastInTitleBarBand = false;
+        _lastOverChromeButton = false;
+        _lastCursorZone = (ResizeZone)(-1);
+        _lastChromeButtonCursor = false;
+        ClearResizeGripVisuals(immediate);
+        SetTitleBarHover(false);
+        Mouse.OverrideCursor = null;
+        Cursor = null;
+    }
+
+    private void ClearResizeGripVisuals(bool immediate)
+    {
+        SetGripOpacity(LeftGrip, false, immediate);
+        SetGripOpacity(RightGrip, false, immediate);
+        SetGripOpacity(BottomGrip, false, immediate);
+        SetGripOpacity(BottomLeftCornerGrip, false, immediate);
+        SetGripOpacity(BottomRightCornerGrip, false, immediate);
     }
 
     private void SetResizeGripVisibility(ResizeZone zone)
     {
-        AnimateGripOpacity(LeftGrip, zone is ResizeZone.Left or ResizeZone.BottomLeft);
-        AnimateGripOpacity(RightGrip, zone is ResizeZone.Right or ResizeZone.BottomRight);
-        AnimateGripOpacity(BottomGrip,
-            zone is ResizeZone.Bottom or ResizeZone.BottomLeft or ResizeZone.BottomRight);
+        SetGripOpacity(LeftGrip, zone is ResizeZone.Left or ResizeZone.BottomLeft, immediate: false);
+        SetGripOpacity(RightGrip, zone is ResizeZone.Right or ResizeZone.BottomRight, immediate: false);
+        SetGripOpacity(BottomGrip,
+            zone is ResizeZone.Bottom or ResizeZone.BottomLeft or ResizeZone.BottomRight,
+            immediate: false);
+        SetGripOpacity(BottomLeftCornerGrip, zone == ResizeZone.BottomLeft, immediate: false);
+        SetGripOpacity(BottomRightCornerGrip, zone == ResizeZone.BottomRight, immediate: false);
     }
 
-    private static void AnimateGripOpacity(UIElement element, bool visible)
+    private static void SetGripOpacity(UIElement element, bool visible, bool immediate)
     {
+        var target = visible ? 1.0 : 0.0;
+        element.BeginAnimation(UIElement.OpacityProperty, null);
+
+        if (immediate)
+        {
+            element.Opacity = target;
+            return;
+        }
+
+        if (!visible && element.Opacity <= 0.001)
+        {
+            element.Opacity = 0;
+            return;
+        }
+
+        if (visible && element.Opacity >= 0.999)
+        {
+            element.Opacity = 1;
+            return;
+        }
+
         var anim = new DoubleAnimation
         {
-            To = visible ? 1.0 : 0.0,
-            Duration = TimeSpan.FromMilliseconds(120),
+            To = target,
+            Duration = TimeSpan.FromMilliseconds(visible ? 90 : 70),
             EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut },
             FillBehavior = FillBehavior.Stop,
         };
-        anim.Completed += (_, _) => element.Opacity = visible ? 1.0 : 0.0;
+        anim.Completed += (_, _) => element.Opacity = target;
         element.BeginAnimation(UIElement.OpacityProperty, anim);
+    }
+
+    private void TrackClientMouseLeave(IntPtr hwnd)
+    {
+        if (_trackingMouseLeave) return;
+        _trackingMouseLeave = true;
+        _trackingNcMouseLeave = false;
+
+        var tme = new NativeMethods.TRACKMOUSEEVENT
+        {
+            cbSize = Marshal.SizeOf<NativeMethods.TRACKMOUSEEVENT>(),
+            dwFlags = NativeMethods.TME_LEAVE,
+            hwndTrack = hwnd,
+        };
+        NativeMethods.TrackMouseEvent(ref tme);
+    }
+
+    private void TrackNcMouseLeave(IntPtr hwnd)
+    {
+        if (_trackingNcMouseLeave) return;
+        _trackingNcMouseLeave = true;
+        _trackingMouseLeave = false;
+
+        var tme = new NativeMethods.TRACKMOUSEEVENT
+        {
+            cbSize = Marshal.SizeOf<NativeMethods.TRACKMOUSEEVENT>(),
+            dwFlags = NativeMethods.TME_LEAVE | NativeMethods.TME_NONCLIENT,
+            hwndTrack = hwnd,
+        };
+        NativeMethods.TrackMouseEvent(ref tme);
     }
 
     private static Point GetScreenPointFromLParam(IntPtr lParam)
@@ -328,12 +1111,18 @@ public partial class TaskbarOverlay : Window
 
         var edgeW = ScaledBorder(ResizeBorderHorizontal);
         var edgeH = ScaledBorder(ResizeBorderBottom);
+        var titleH = GetTitleBarHeight();
+        var bodyH = Math.Max(1, ActualHeight - titleH);
+
         LeftGrip.Width = edgeW;
         RightGrip.Width = edgeW;
+        LeftGrip.Margin = new Thickness(0, titleH, 0, 0);
+        RightGrip.Margin = new Thickness(0, titleH, 0, 0);
         BottomGrip.Height = edgeH;
+        BottomGrip.Margin = new Thickness(edgeW, 0, edgeW, 0);
 
-        var dashV = Math.Clamp(ActualHeight * 0.35, 36, 120);
-        var dashH = Math.Clamp(ActualWidth * 0.35, 36, 120);
+        var dashV = Math.Clamp(bodyH * 0.42, 32, 96);
+        var dashH = Math.Clamp((ActualWidth - edgeW * 2) * 0.38, 32, 120);
         LeftGripDash.X1 = edgeW / 2;
         LeftGripDash.X2 = edgeW / 2;
         LeftGripDash.Y2 = dashV;
@@ -375,22 +1164,28 @@ public partial class TaskbarOverlay : Window
                 var bottomRight = fromDevice.Transform(new Point(rect.Right, rect.Bottom));
                 var taskbarHeight = bottomRight.Y - topLeft.Y;
                 var width = Math.Max(MinWidth, (bottomRight.X - topLeft.X) / 2);
-                var height = Math.Max(DefaultPanelHeight, taskbarHeight);
+                var height = _visibilityMode == OverlayVisibilityMode.Compact
+                    ? CompactBarHeight
+                    : Math.Max(DefaultPanelHeight, taskbarHeight);
                 Left = topLeft.X;
                 Top = topLeft.Y + taskbarHeight - height;
                 Width = width;
-                Height = Math.Max(MinHeight, height);
+                Height = Math.Max(_visibilityMode == OverlayVisibilityMode.Compact ? CompactBarHeight : MinHeight, height);
                 return;
             }
 
             var scale = NativeMethods.GetDpiScale(_taskbarService.TrayWindowHandle);
             var tbHeight = rect.Height / scale;
             var tbWidth = rect.Width / scale;
-            var panelHeight = Math.Max(DefaultPanelHeight, tbHeight);
+            var panelHeight = _visibilityMode == OverlayVisibilityMode.Compact
+                ? CompactBarHeight
+                : Math.Max(DefaultPanelHeight, tbHeight);
             Left = rect.Left / scale;
             Top = rect.Top / scale + tbHeight - panelHeight;
             Width = Math.Max(MinWidth, tbWidth / 2);
-            Height = Math.Max(MinHeight, panelHeight);
+            Height = Math.Max(
+                _visibilityMode == OverlayVisibilityMode.Compact ? CompactBarHeight : MinHeight,
+                panelHeight);
         }
         finally
         {
@@ -405,7 +1200,9 @@ public partial class TaskbarOverlay : Window
         {
             var work = SystemParameters.WorkArea;
             const double fallbackTaskbarHeight = 72;
-            var height = Math.Max(DefaultPanelHeight, fallbackTaskbarHeight);
+            var height = _visibilityMode == OverlayVisibilityMode.Compact
+                ? CompactBarHeight
+                : Math.Max(DefaultPanelHeight, fallbackTaskbarHeight);
             Left = work.Left;
             Top = work.Bottom - height;
             Width = Math.Max(MinWidth, work.Width / 2);
@@ -461,6 +1258,11 @@ public partial class TaskbarOverlay : Window
 
     public void Refresh()
     {
+        if (_visibilityAnimating) return;
+
+        if (++_refreshCount % 30 == 0)
+            _ = RefreshDiscoveryIndexAsync();
+
         OverlayCanvas.Children.Clear();
         RenderGroupsPanel();
         RenderTaskbarDividers();
@@ -474,6 +1276,12 @@ public partial class TaskbarOverlay : Window
         if (_config.Groups.Count == 0)
         {
             GroupsPanel.Children.Add(MakeHintText("No groups yet — use Add App to assign an application."));
+            return;
+        }
+
+        if (!_appDiscovery.IsIndexReady)
+        {
+            RenderGroupsLoadingState();
             return;
         }
 
@@ -500,6 +1308,24 @@ public partial class TaskbarOverlay : Window
 
             var stack = new StackPanel();
 
+            var detectedCount = 0;
+            var chipEntries = new List<(string ProcessName, AppPresence Presence, DiscoveredApp? Discovered, string? TaskbarTitle)>();
+
+            foreach (var processName in group.ProcessNames)
+            {
+                var discovered = _appDiscovery.TryResolve(processName);
+                var onTaskbarNow = onTaskbar.Contains(processName);
+                taskbarTitles.TryGetValue(processName, out var taskbarTitle);
+
+                var presence = ResolvePresence(processName, onTaskbarNow, discovered);
+                if (presence == AppPresence.NotFound) continue;
+
+                if (presence is AppPresence.Running or AppPresence.Installed)
+                    detectedCount++;
+
+                chipEntries.Add((processName, presence, discovered, taskbarTitle));
+            }
+
             var header = new TextBlock
             {
                 Text = group.Name,
@@ -510,21 +1336,20 @@ public partial class TaskbarOverlay : Window
                 Margin = new Thickness(0, 0, 0, 4),
             };
             ToolTipService.SetToolTip(header, MakeTooltip(
-                $"{group.Name}\n{group.ProcessNames.Count} app(s) · {group.GapAfter}px gap after group"));
+                $"{group.Name}\n{detectedCount} detected on this PC · {group.ProcessNames.Count} in config · {group.GapAfter}px gap after group"));
             stack.Children.Add(header);
 
-            if (group.ProcessNames.Count == 0)
+            if (chipEntries.Count == 0)
             {
-                stack.Children.Add(MakeHintText("No apps — click Add App"));
+                stack.Children.Add(MakeHintText(
+                    "No matching apps on this PC — use Add App or install an app from this group"));
             }
             else
             {
                 var wrap = new WrapPanel { Orientation = Orientation.Horizontal };
-                foreach (var processName in group.ProcessNames)
+                foreach (var (processName, presence, discovered, taskbarTitle) in chipEntries)
                 {
-                    var running = onTaskbar.Contains(processName);
-                    taskbarTitles.TryGetValue(processName, out var taskbarTitle);
-                    wrap.Children.Add(BuildAppChip(processName, running, accent, taskbarTitle));
+                    wrap.Children.Add(BuildAppChip(processName, presence, accent, group, discovered, taskbarTitle));
                 }
                 stack.Children.Add(wrap);
             }
@@ -534,14 +1359,85 @@ public partial class TaskbarOverlay : Window
         }
     }
 
-    private Border BuildAppChip(string processName, bool onTaskbar, Brush accent, string? taskbarTitle = null)
+    private void RenderGroupsLoadingState()
     {
-        var label = HumanizeProcessName(processName);
-        var idleBg = new SolidColorBrush(Color.FromArgb(0x33, 0x5B, 0x8C, 0xFF));
-        var hoverBg = new SolidColorBrush(Color.FromArgb(0x55, 0x5B, 0x8C, 0xFF));
-        var idleBorder = onTaskbar
+        var panel = new StackPanel
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 28, 0, 28),
+        };
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Searching for apps…",
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 6),
+        });
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Scanning installed programs on this PC",
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 10,
+            Foreground = new SolidColorBrush(Color.FromArgb(0x88, 0xFF, 0xFF, 0xFF)),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+
+        GroupsPanel.Children.Add(panel);
+    }
+
+    private static AppPresence ResolvePresence(string processName, bool onTaskbar, DiscoveredApp? discovered)
+    {
+        if (onTaskbar || IsProcessRunning(processName))
+            return AppPresence.Running;
+        if (discovered != null)
+            return AppPresence.Installed;
+        return AppPresence.NotFound;
+    }
+
+    private static bool IsProcessRunning(string processName)
+    {
+        try
+        {
+            return Process.GetProcessesByName(processName).Length > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private Border BuildAppChip(
+        string processName,
+        AppPresence presence,
+        Brush accent,
+        TaskbarGroup group,
+        DiscoveredApp? discovered,
+        string? taskbarTitle = null)
+    {
+        var label = discovered?.DisplayName ?? HumanizeProcessName(processName);
+        var running = presence == AppPresence.Running;
+        var idleBg = presence switch
+        {
+            AppPresence.Running => new SolidColorBrush(Color.FromArgb(0x33, 0x5B, 0x8C, 0xFF)),
+            AppPresence.Installed => new SolidColorBrush(Color.FromArgb(0x28, 0xFF, 0xFF, 0xFF)),
+            _ => new SolidColorBrush(Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)),
+        };
+        var hoverBg = presence switch
+        {
+            AppPresence.Running => new SolidColorBrush(Color.FromArgb(0x55, 0x5B, 0x8C, 0xFF)),
+            AppPresence.Installed => new SolidColorBrush(Color.FromArgb(0x44, 0xFF, 0xFF, 0xFF)),
+            _ => new SolidColorBrush(Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF)),
+        };
+        var idleBorder = running
             ? accent
-            : new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF));
+            : presence == AppPresence.Installed
+                ? new SolidColorBrush(Color.FromArgb(0x88, 0xFF, 0xB3, 0x4D))
+                : new SolidColorBrush(Color.FromArgb(0x44, 0xFF, 0xFF, 0xFF));
 
         var chip = new Border
         {
@@ -553,11 +1449,12 @@ public partial class TaskbarOverlay : Window
             Padding = new Thickness(8, 2, 8, 2),
             Margin = new Thickness(0, 0, 6, 4),
             Cursor = Cursors.Hand,
-            ToolTip = MakeTooltip(BuildChipTooltip(processName, label, onTaskbar, taskbarTitle)),
+            ToolTip = MakeTooltip(BuildChipTooltip(processName, label, presence, discovered, taskbarTitle)),
+            ContextMenu = BuildChipContextMenu(processName, group, label),
         };
 
         var row = new StackPanel { Orientation = Orientation.Horizontal };
-        if (onTaskbar)
+        if (running)
         {
             row.Children.Add(new Border
             {
@@ -569,13 +1466,29 @@ public partial class TaskbarOverlay : Window
                 Margin = new Thickness(0, 0, 5, 0),
             });
         }
+        else if (presence == AppPresence.Installed)
+        {
+            row.Children.Add(new Border
+            {
+                Width = 6,
+                Height = 6,
+                CornerRadius = new CornerRadius(3),
+                Background = Brushes.Transparent,
+                BorderBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0xB3, 0x4D)),
+                BorderThickness = new Thickness(1),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 5, 0),
+            });
+        }
 
         row.Children.Add(new TextBlock
         {
             Text = label,
             FontFamily = new FontFamily("Segoe UI"),
             FontSize = 10,
-            Foreground = Brushes.White,
+            Foreground = presence == AppPresence.Installed
+                ? new SolidColorBrush(Color.FromArgb(0xDD, 0xFF, 0xFF, 0xFF))
+                : Brushes.White,
             VerticalAlignment = VerticalAlignment.Center,
             IsHitTestVisible = false,
         });
@@ -586,14 +1499,71 @@ public partial class TaskbarOverlay : Window
         chip.MouseLeftButtonUp += (_, e) =>
         {
             e.Handled = true;
+            if (chip.ContextMenu != null && chip.ContextMenu.IsOpen) return;
             FocusOrLaunchApp(processName);
         };
         return chip;
     }
 
+    private ContextMenu BuildChipContextMenu(string processName, TaskbarGroup group, string label)
+    {
+        var menu = new ContextMenu
+        {
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 11,
+            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x2A, 0x2E)),
+            BorderBrush = new SolidColorBrush(Color.FromArgb(0x55, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            Padding = new Thickness(2),
+        };
+
+        var removeItem = new MenuItem
+        {
+            Header = $"Remove \"{label}\" from {group.Name}",
+            Foreground = Brushes.White,
+        };
+        removeItem.Click += (_, _) => RemoveAppFromGroup(processName, group);
+        menu.Items.Add(removeItem);
+        return menu;
+    }
+
+    private void RemoveAppFromGroup(string processName, TaskbarGroup group)
+    {
+        if (_config == null) return;
+
+        var matches = group.ProcessNames
+            .Where(p => p.Equals(processName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (matches.Count == 0) return;
+
+        foreach (var match in matches)
+            group.ProcessNames.Remove(match);
+
+        if (!_config.Groups.Any(g =>
+                g.ProcessNames.Any(p => p.Equals(processName, StringComparison.OrdinalIgnoreCase))))
+        {
+            _config.KnownExePaths.Remove(processName);
+            _appDiscovery.UnregisterKnownApp(processName);
+            }
+
+            if (!_configService.Save(_config))
+            {
+            MessageBox.Show(
+                "Failed to save settings. Please check that the config directory is accessible.",
+                "Save Failed",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            }
+            ConfigChanged?.Invoke(_config);
+            Refresh();
+            }
+
     private void FocusOrLaunchApp(string processName)
     {
         if (_taskbarService.TryFocusApp(processName)) return;
+
+        // Prevent launching a second instance if the process is already running
+        if (Process.GetProcessesByName(processName).Length > 0) return;
 
         _ = LaunchAppAsync(processName);
     }
@@ -602,9 +1572,14 @@ public partial class TaskbarOverlay : Window
     {
         try
         {
-            var apps = await _appDiscovery.SearchAsync(processName);
-            var app = apps.FirstOrDefault(a =>
-                a.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+            var app = _appDiscovery.TryResolve(processName);
+            if (app == null)
+            {
+                var apps = await _appDiscovery.SearchAsync(processName);
+                app = apps.FirstOrDefault(a =>
+                    a.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+            }
+
             if (app == null || !File.Exists(app.ExePath)) return;
 
             Process.Start(new ProcessStartInfo(app.ExePath) { UseShellExecute = true });
@@ -616,21 +1591,31 @@ public partial class TaskbarOverlay : Window
     }
 
     private static string BuildChipTooltip(
-        string processName, string label, bool onTaskbar, string? taskbarTitle)
+        string processName,
+        string label,
+        AppPresence presence,
+        DiscoveredApp? discovered,
+        string? taskbarTitle)
     {
         var lines = new List<string> { label, $"{processName}.exe" };
 
-        if (onTaskbar)
+        switch (presence)
         {
-            lines.Add("Running on taskbar");
-            if (!string.IsNullOrWhiteSpace(taskbarTitle))
-                lines.Add(taskbarTitle);
-            lines.Add("Click to switch to this app");
-        }
-        else
-        {
-            lines.Add("Not running");
-            lines.Add("Click to launch");
+            case AppPresence.Running:
+                lines.Add("Running");
+                if (!string.IsNullOrWhiteSpace(taskbarTitle))
+                    lines.Add(taskbarTitle);
+                lines.Add("Click to switch · right-click to remove");
+                break;
+            case AppPresence.Installed:
+                lines.Add("Installed on this PC");
+                if (discovered != null)
+                    lines.Add($"Found via {discovered.Source}");
+                lines.Add("Click to launch · right-click to remove");
+                break;
+            default:
+                lines.Add("Not found on this PC");
+                break;
         }
 
         return string.Join('\n', lines);
@@ -660,7 +1645,8 @@ public partial class TaskbarOverlay : Window
     private void RenderTaskbarDividers()
     {
         // Panel mode — groups list is the UI; skip taskbar divider overlay.
-        if (_config == null || _manualLayout || ActualHeight > TaskbarStripMaxHeight) return;
+        if (_config == null || _manualLayout || _visibilityMode == OverlayVisibilityMode.Compact
+            || ActualHeight > TaskbarStripMaxHeight) return;
 
         var buttons = _taskbarService.GetTaskbarButtons();
         if (buttons.Count == 0) return;

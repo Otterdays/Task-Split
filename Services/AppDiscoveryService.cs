@@ -12,10 +12,71 @@ public class AppDiscoveryService
 {
     private readonly object _lock = new();
     private List<DiscoveredApp>? _index;
+    private readonly Dictionary<string, DiscoveredApp> _knownApps = new(StringComparer.OrdinalIgnoreCase);
 
     public void InvalidateIndex()
     {
         lock (_lock) _index = null;
+    }
+
+    /// <summary>Loads user-registered exe paths (from config) into the resolver.</summary>
+    public void SetKnownExePaths(IReadOnlyDictionary<string, string> paths)
+    {
+        lock (_lock)
+        {
+            _knownApps.Clear();
+            foreach (var (processName, exePath) in paths)
+            {
+                var app = FromExePath(exePath);
+                if (app != null)
+                    _knownApps[processName] = app;
+            }
+        }
+    }
+
+    public void RegisterKnownApp(DiscoveredApp app)
+    {
+        lock (_lock) _knownApps[app.ProcessName] = app;
+    }
+
+    public void UnregisterKnownApp(string processName)
+    {
+        lock (_lock) _knownApps.Remove(processName);
+    }
+
+    /// <summary>Builds the system app index if not already cached.</summary>
+    public Task WarmIndexAsync(CancellationToken ct = default) => GetIndexAsync(ct);
+
+    /// <summary>Rebuilds the index without clearing the cached copy first (avoids UI flicker).</summary>
+    public async Task RefreshIndexAsync(CancellationToken ct = default)
+    {
+        var built = await Task.Run(() => BuildIndex(ct), ct).ConfigureAwait(false);
+        lock (_lock) _index = built;
+    }
+
+    public bool IsIndexReady
+    {
+        get { lock (_lock) return _index != null; }
+    }
+
+    /// <summary>Looks up a process name in the warmed index (null if not installed / index not ready).</summary>
+    public DiscoveredApp? TryResolve(string processName)
+    {
+        if (string.IsNullOrWhiteSpace(processName)) return null;
+
+        lock (_lock)
+        {
+            if (_knownApps.TryGetValue(processName, out var known))
+            {
+                if (File.Exists(known.ExePath))
+                    return known;
+                _knownApps.Remove(processName);
+            }
+
+            if (_index == null) return null;
+            return _index.FirstOrDefault(a =>
+                a.ProcessName.Equals(processName, StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     public async Task<IReadOnlyList<DiscoveredApp>> SearchAsync(string query, CancellationToken ct = default)
@@ -42,6 +103,93 @@ public class AppDiscoveryService
         var processName = Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
         var displayName = HumanizeProcessName(processName);
         return new DiscoveredApp(processName, displayName, exePath, "Manual browse", TryGetExeAddedAt(exePath));
+    }
+
+    /// <summary>Permanently deletes an indexed executable from disk (with safety guards).</summary>
+    public DeleteExecutableResult TryDeleteExecutable(string exePath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(exePath) || !File.Exists(exePath))
+                return new DeleteExecutableResult(false, "File not found.");
+
+            var fullPath = Path.GetFullPath(exePath);
+            if (IsProtectedSystemPath(fullPath))
+                return new DeleteExecutableResult(false, "Cannot delete files from protected Windows folders.");
+
+            if (IsExecutableInUse(fullPath))
+                return new DeleteExecutableResult(false, "This program is running. Close it first, then try again.");
+
+            File.Delete(fullPath);
+            RemoveFromCachedIndex(fullPath);
+            return new DeleteExecutableResult(true, "File deleted.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return new DeleteExecutableResult(false, "Access denied. Try running Task-Split as administrator.");
+        }
+        catch (IOException ex)
+        {
+            return new DeleteExecutableResult(false, ex.Message);
+        }
+        catch (Exception ex)
+        {
+            return new DeleteExecutableResult(false, ex.Message);
+        }
+    }
+
+    private void RemoveFromCachedIndex(string fullPath)
+    {
+        lock (_lock)
+        {
+            _index?.RemoveAll(a =>
+                a.ExePath.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private static bool IsProtectedSystemPath(string fullPath)
+    {
+        var roots = new[]
+        {
+            Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+            Environment.GetFolderPath(Environment.SpecialFolder.System),
+            Environment.GetFolderPath(Environment.SpecialFolder.SystemX86),
+        };
+
+        foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(root)) continue;
+            var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar)
+                + Path.DirectorySeparatorChar;
+            if (fullPath.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsExecutableInUse(string fullPath)
+    {
+        foreach (var proc in Process.GetProcesses())
+        {
+            try
+            {
+                var modulePath = proc.MainModule?.FileName;
+                if (modulePath != null
+                    && fullPath.Equals(Path.GetFullPath(modulePath), StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            catch
+            {
+                // Access denied for system processes
+            }
+            finally
+            {
+                proc.Dispose();
+            }
+        }
+
+        return false;
     }
 
     private async Task<List<DiscoveredApp>> GetIndexAsync(CancellationToken ct)
@@ -79,6 +227,22 @@ public class AppDiscoveryService
 
             if (map.TryGetValue(processName, out var existing))
             {
+                var existingIsRunning = existing.AddedAt == null;
+                var newIsRunning = resolvedAddedAt == null;
+
+                if (existingIsRunning && !newIsRunning)
+                {
+                    // Keep the running-process entry; don't overwrite with a dated shortcut
+                    return;
+                }
+
+                if (!existingIsRunning && newIsRunning)
+                {
+                    // Replace shortcut with the running-process entry
+                    map[processName] = app;
+                    return;
+                }
+
                 var useNew = resolvedAddedAt > (existing.AddedAt ?? DateTime.MinValue);
                 map[processName] = existing with
                 {

@@ -34,18 +34,20 @@ public class ConfigService
         }
     }
 
-    public void Save(AppConfig config)
+    public bool Save(AppConfig config)
     {
         try
         {
             Directory.CreateDirectory(ConfigDir);
             var json = JsonSerializer.Serialize(config, JsonOpts);
             File.WriteAllText(ConfigPath, json);
+            return true;
         }
         catch (Exception ex)
         {
             // Non-fatal — log to debug output
             System.Diagnostics.Debug.WriteLine($"[TaskSplit] Config save failed: {ex.Message}");
+            return false;
         }
     }
 

@@ -10,7 +10,7 @@
 - [x] Overlay positioning fixes (DPI, z-order, Win11 HWND fallbacks, debug diagnostics)
 - [x] Overlay drag/resize + manual layout lock
 - [x] **Add App dialog** + `AppDiscoveryService` (exe scan/search)
-- [x] **Groups panel** on overlay (shows configured groups/apps; green dot = on taskbar)
+- [x] **Groups panel** on overlay (shows configured groups/apps; green dot = running, amber ring = installed)
 - [ ] Taskbar Physical Spacing Integration
 - [ ] Full configuration UI (group editor, gap editor)
 - [x] System Tray App Lifecycle
@@ -34,7 +34,11 @@
 
 ---
 ## RECENT ACTIONS
-- [x] 2026-06-25: **Docs** — documented hardcoded `CreateDefault()` seed groups (Work/Browser/Chat + preset process names) in README, ARCHITECTURE, FEATURES, CHANGELOG.
+- [x] 2026-06-25: **Fix** stuck resize cursor — `Window.Cursor` fought Win32 NC bands; now `Mouse.OverrideCursor` for client zones only + `MouseMove` fallback clears on leave.
+- [x] 2026-06-25: **Startup loading state** — groups panel shows “Searching for apps…” until discovery index ready (no preset chip flash).
+- [x] 2026-06-25: **Overlay minimize modes** — title bar `─` compact strip (on-screen), `×` full hide; tray **Show Overlay** + **Compact bar** toggles stay in sync; double-click compact bar to expand.
+- [x] 2026-06-25: **Live chip detection** — `AppDiscoveryService.TryResolve` + process check; hide undetected preset apps; running/installed/pending chip states; index warm on load + ~60s refresh.
+- [x] 2026-06-25: **build.bat** — Release output → `BuiltExe\TaskSplit.exe` (csproj `OutputPath` for Release).
 - [x] 2026-06-25: **Tooltips** on overlay — app chips (process, status, taskbar title, action), group headers, title bar, Add App button.
 - [x] 2026-06-25: **Fix** app chip click-to-focus — UIA invoke + taskbar screen click + EnumWindows foreground; launch fallback for stopped apps.
 - [x] 2026-06-25: **Fix** overlay "always Hand cursor" — `ScrollViewer` no longer treated as clickable; window cursor only on resize/title zones; app chips clickable (`TryFocusApp`).

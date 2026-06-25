@@ -1,6 +1,50 @@
 <!-- PRESERVATION RULE: Never delete or replace content. Append or annotate only. -->
 # Changelog: Task-Split Project
 
+## [0.1.16] - 2026-06-25
+### Changed
+- **Resize hover polish** — side grips inset below title bar (no blue bleed at top); softer side gradient; bottom edge = centered dash only (no full-width gradient strip); corner hints → small dots.
+### Fixed
+- **Grotesque top/bottom lines** — removed full-frame `ChromeBorder` accent on edge hover (was painting thin accent on top/bottom while resizing sides).
+- **Resize grips stick after leave** — NC resize bands now register `TrackMouseEvent(TME_NONCLIENT)` so `WM_NCMOUSELEAVE` clears grips when cursor exits the window from an edge; `zone == None` always forces immediate clear.
+- **Title bar chrome buttons (−/×)** — title bar highlight no longer drops when hovering buttons; custom `ControlTemplate` for visible accent hover/press; Hand cursor on buttons vs SizeAll on draggable title area.
+- **Sluggish title bar drag** — replaced Win32 `HTCAPTION` path with WPF `DragMove()` (3px move threshold); double-click expand preserved in compact mode; hover hit-test work deduped/skipped during drag.
+- **Title bar −/× clicks ignored** — preview drag on whole `TitleBarBorder` blocked button routing; fixed with isolated `TitleBarDragArea` (drag only) + `TitleChromeButtonStyle` on button column.
+- **Resize grip flicker** — WPF `MouseLeave` no longer clears grips when pointer enters NC resize band; client leave uses `TrackMouseEvent` + `WM_MOUSELEAVE`.
+- **Grips during drag-resize** — edge visuals hide for `WM_ENTERSIZEMOVE`…`WM_EXITSIZEMOVE`; cursor/chrome reset on window leave.
+- **Grip opacity stacking** — cancel in-flight opacity anim before next; skip anim when already at target.
+- **Narrow window edges** — resize hit bands clamp so left/right/bottom zones do not overlap on min width/height.
+
+## [0.1.15] - 2026-06-25
+### Fixed
+- **Snap to Taskbar** — deferred `LocationChanged`/`SizeChanged` no longer re-lock manual layout after snap; snap also restores hidden/compact overlay to expanded docked panel.
+- **Tray double-click** — restores and snaps the overlay (same as full resume above taskbar).
+
+## [0.1.14] - 2026-06-25
+### Changed
+- **Compact bar polish** — title bar fills the strip (no empty band), 1px accent chrome with rounded corners, blue left accent + brand dot, hides cluttered hint text; expand via double-click or ⤢ button.
+
+## [0.1.13] - 2026-06-25
+### Added
+- **Remove app chip** — right-click a chip in the groups panel → **Remove from group**; updates `config.json` and clears `KnownExePaths` when the app is no longer in any group.
+
+## [0.1.12] - 2026-06-25
+### Fixed
+- **Startup chip flash** — groups panel shows “Searching for apps…” until discovery index is ready; preset config names no longer flash as dim chips first.
+
+## [0.1.11] - 2026-06-25
+### Fixed
+- **Browse custom exe** — setting search text after Browse no longer triggers a search that wipes the picked file from the list; browsed app stays selected until you search again.
+- **Custom exe not in overlay** — `KnownExePaths` in config + `AppDiscoveryService.RegisterKnownApp` so user-browsed apps resolve and show as chips (launch + installed state).
+
+## [0.1.10] - 2026-06-25
+### Added
+- **Add App — delete from system** — right-click a search result → permanently delete the `.exe` from disk (confirmation required). Blocks protected Windows folders and running processes. Updates discovery index and removes the app from config groups if assigned.
+
+## [0.1.9] - 2026-06-25
+### Added
+- **Live app chip detection** — overlay resolves config process names against `AppDiscoveryService` (Start Menu, Program Files, registry, running processes). Undetected apps are hidden; **green dot** = running, **amber ring** = installed but not running. Index warms on startup and refreshes ~every 60s.
+
 ## [0.1.8] - 2026-06-25
 ### Documentation
 - Documented **hardcoded first-run config** — `ConfigService.CreateDefault()` seeds Work / Browser / Chat groups with preset process names; clarified distinction from **+ Add App** system discovery (`README`, `ARCHITECTURE`, `FEATURES`).

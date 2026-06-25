@@ -42,6 +42,8 @@ public class TaskbarGroup : INotifyPropertyChanged
 public class AppConfig
 {
     public List<TaskbarGroup> Groups { get; set; } = [];
+    /// <summary>User-picked exe paths for process names (e.g. from Browse).</summary>
+    public Dictionary<string, string> KnownExePaths { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public bool ShowGroupLabels { get; set; } = true;
     public bool ShowDividers { get; set; } = true;
     public bool AttemptPhysicalSpacing { get; set; } = true;

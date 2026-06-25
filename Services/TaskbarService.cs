@@ -5,6 +5,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Automation;
 using TaskSplit.Models;
 using TaskSplit.Win32;
@@ -302,8 +303,9 @@ public class TaskbarService
         if (HumanizeProcessName(button.ProcessName).Equals(humanized, StringComparison.OrdinalIgnoreCase))
             return true;
 
-        return button.Title.Contains(humanized, StringComparison.OrdinalIgnoreCase)
-            || button.Title.Contains(processName, StringComparison.OrdinalIgnoreCase);
+        // Use word-boundary matching to avoid false positives like "code" matching "Codecademy"
+        var pattern = $@"\b{Regex.Escape(humanized)}\b|\b{Regex.Escape(processName)}\b";
+        return Regex.IsMatch(button.Title, pattern, RegexOptions.IgnoreCase);
     }
 
     private static string HumanizeProcessName(string processName) =>

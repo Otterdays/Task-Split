@@ -19,6 +19,8 @@ public partial class App : Application
     private AppConfig? _config;
     private TaskbarService? _taskbarService;
     private AppDiscoveryService? _appDiscoveryService;
+    private MenuItem? _showOverlayItem;
+    private MenuItem? _compactBarItem;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -28,16 +30,19 @@ public partial class App : Application
         _config = _configService.Load();
         _taskbarService = new TaskbarService();
         _appDiscoveryService = new AppDiscoveryService();
+        _appDiscoveryService.SetKnownExePaths(_config.KnownExePaths);
 
         InitializeTray();
         InitializeOverlay();
 
-        // Timer or periodic check for window updates? Let's use simple polling for MVP
         System.Windows.Threading.DispatcherTimer timer = new();
-        timer.Interval = TimeSpan.FromSeconds(2); // Refresh every 2 seconds
+        timer.Interval = TimeSpan.FromSeconds(2);
         timer.Tick += (s, ev) =>
         {
-            // Only poll taskbar position when auto-snapped; never rebuild UI during manual drag.
+            if (_overlay?.VisibilityMode == OverlayVisibilityMode.Hidden
+                || _overlay?.IsVisibilityAnimating == true)
+                return;
+
             if (_overlay?.IsManualLayout == true)
                 _overlay.Refresh();
             else
@@ -56,35 +61,43 @@ public partial class App : Application
         };
 
         var menu = new ContextMenu();
-        var toggleItem = new MenuItem { Header = "Show Overlay", IsCheckable = true, IsChecked = true };
-        toggleItem.Click += (s, ev) => {
-            if (_overlay != null) {
-                if (_overlay.IsVisible) _overlay.Hide();
-                else _overlay.Show();
-                toggleItem.IsChecked = _overlay.IsVisible;
-            }
+        menu.Opened += (_, _) => SyncTrayMenuFromOverlay();
+
+        _showOverlayItem = new MenuItem { Header = "Show Overlay", IsCheckable = true, IsChecked = true };
+        _showOverlayItem.Click += (_, _) =>
+        {
+            _overlay?.ToggleHidden();
+            SyncTrayMenuFromOverlay();
+        };
+
+        _compactBarItem = new MenuItem { Header = "Compact bar", IsCheckable = true, IsChecked = false };
+        _compactBarItem.Click += (_, _) =>
+        {
+            _overlay?.ToggleCompact();
+            SyncTrayMenuFromOverlay();
         };
 
         var settingsItem = new MenuItem { Header = "Settings" };
-        settingsItem.Click += (s, ev) => ShowSettings();
+        settingsItem.Click += (_, _) => ShowSettings();
 
         var debugItem = new MenuItem { Header = "Debug Overlay Info" };
-        debugItem.Click += (s, ev) => ShowDebugInfo();
+        debugItem.Click += (_, _) => ShowDebugInfo();
 
         var snapItem = new MenuItem { Header = "Snap to Taskbar" };
-        snapItem.Click += (s, ev) => _overlay?.SnapToTaskbar();
+        snapItem.Click += (_, _) => _overlay?.SnapToTaskbar();
 
         var resetItem = new MenuItem { Header = "Reset Taskbar Cache" };
-        resetItem.Click += (s, ev) =>
+        resetItem.Click += (_, _) =>
         {
             _taskbarService?.ResetCache();
             _overlay?.SnapToTaskbar();
         };
 
         var exitItem = new MenuItem { Header = "Exit" };
-        exitItem.Click += (s, ev) => Shutdown();
+        exitItem.Click += (_, _) => Shutdown();
 
-        menu.Items.Add(toggleItem);
+        menu.Items.Add(_showOverlayItem);
+        menu.Items.Add(_compactBarItem);
         menu.Items.Add(new Separator());
         menu.Items.Add(settingsItem);
         menu.Items.Add(snapItem);
@@ -94,13 +107,37 @@ public partial class App : Application
         menu.Items.Add(exitItem);
 
         _notifyIcon.ContextMenu = menu;
+
+        _notifyIcon.TrayMouseDoubleClick += (_, _) =>
+        {
+            _overlay?.RestoreFromTray();
+            SyncTrayMenuFromOverlay();
+        };
     }
 
     private void InitializeOverlay()
     {
         _overlay = new TaskbarOverlay(_taskbarService!, _configService!, _appDiscoveryService!, _config!);
-        _overlay.ConfigChanged += config => _config = config;
+        _overlay.ConfigChanged += config =>
+        {
+            _config = config;
+            _appDiscoveryService?.SetKnownExePaths(config.KnownExePaths);
+        };
+        _overlay.VisibilityModeChanged += SyncTrayMenuFromOverlay;
         _overlay.Show();
+    }
+
+    private void SyncTrayMenuFromOverlay()
+    {
+        if (_overlay == null || _showOverlayItem == null || _compactBarItem == null) return;
+
+        var mode = _overlay.VisibilityMode;
+        var visible = mode != OverlayVisibilityMode.Hidden;
+
+        _showOverlayItem.IsChecked = visible;
+
+        _compactBarItem.IsEnabled = visible;
+        _compactBarItem.IsChecked = mode == OverlayVisibilityMode.Compact;
     }
 
     private void ShowSettings()

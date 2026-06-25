@@ -104,7 +104,16 @@
                  BorderBrush="#33FFFFFF"
                  Foreground="White"
                  Margin="0,0,0,12"
-                 SelectionChanged="ResultsList_SelectionChanged">
+                 SelectionChanged="ResultsList_SelectionChanged"
+                 PreviewMouseRightButtonDown="ResultsList_PreviewMouseRightButtonDown"
+                 ContextMenuOpening="ResultsList_ContextMenuOpening">
+            <ListBox.ContextMenu>
+                <ContextMenu>
+                    <MenuItem x:Name="DeleteFromSystemItem"
+                              Header="Delete from system…"
+                              Click="DeleteFromSystemItem_Click" />
+                </ContextMenu>
+            </ListBox.ContextMenu>
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Margin="4,2">

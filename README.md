@@ -55,6 +55,8 @@ After installing, **log out and back in** (or reboot) if `dotnet` is not found i
 
 **Easiest (Windows):** double-click [`launch.bat`](launch.bat) in the project folder.
 
+**Build a release exe:** double-click [`build.bat`](build.bat) — output at `BuiltExe\TaskSplit.exe`.
+
 **From a terminal:**
 
 ```powershell
@@ -66,7 +68,7 @@ dotnet run
 
 ```powershell
 dotnet build -c Release
-# Output: bin\Release\net9.0-windows\TaskSplit.exe
+# Output: BuiltExe\TaskSplit.exe
 ```
 
 ---
@@ -74,10 +76,10 @@ dotnet build -c Release
 ## 🛠️ Usage
 
 1.  **Run** `launch.bat` or `dotnet run` (or `TaskSplit.exe` after building).
-2.  **Overlay** opens above the taskbar (~220px tall, half taskbar width). **Drag the title bar** to move; **drag left/right/bottom edges** to resize (blue glow + dashed hint on hover).
-3.  **Groups panel** — shows your groups and apps below **+ Add App**. Scroll if needed. Green dot = app is on the taskbar now.
-4.  **Add apps** — click **+ Add App**, search (newest installs first) or browse for an `.exe`, pick a group, confirm. Saves to `%AppData%\TaskSplit\config.json`.
-5.  **Tray menu** — Show Overlay, **Snap to Taskbar**, Debug Overlay Info, Reset Taskbar Cache, Exit.
+2.  **Overlay** opens above the taskbar (~220px tall, half taskbar width). **Drag the title bar** to move; **drag left/right/bottom edges** to resize (blue glow + dashed hint on hover). Title bar **`─`** collapses to a slim accent bar (stays on screen); **`×`** hides fully. Double-click the compact bar to expand.
+3.  **Groups panel** — shows your groups and apps below **+ Add App**. Scroll if needed. **Green dot** = running; **amber ring** = installed but not running. **Right-click** a chip to remove it from the group.
+4.  **Add apps** — click **+ Add App**, search (newest installs first) or browse for an `.exe`, pick a group, confirm. **Right-click** a listed app → **Delete from system…** to permanently remove junk installers (e.g. stray `setup.exe` files). Saves to `%AppData%\TaskSplit\config.json`.
+5.  **Tray menu** — **Show Overlay** (checked when visible), **Compact bar** (checked when collapsed to title strip), Snap to Taskbar, Debug Overlay Info, Reset Taskbar Cache, Exit. **Double-click** the tray icon to restore and snap the overlay.
 6.  **Manual config** — edit `%AppData%\TaskSplit\config.json` (process names e.g. `chrome`, `code`, `cursor`).
 
 ### First-run default groups
@@ -90,7 +92,7 @@ On first launch (no config file yet), Task-Split seeds **hardcoded starter group
 | Browser | `chrome`, `firefox`, `msedge` |
 | Chat | `discord`, `slack`, `teams` |
 
-These names are written to `%AppData%\TaskSplit\config.json` automatically. Chips show in the overlay even if you don't use those apps; they only group on the taskbar when the process is running. Remove or edit groups in config, or use **+ Add App** to build your own layout.
+These names are written to `%AppData%\TaskSplit\config.json` automatically. **Only apps detected on your PC appear as chips** (Start Menu, Program Files, registry, or running processes). Chips show in the overlay even if you don't use those apps; they only group on the taskbar when the process is running. Remove or edit groups in config, or use **+ Add App** to build your own layout.
 
 > [!TIP]
 > **Windows 11:** Taskbar buttons are discovered via **UI Automation** when classic HWND enumeration finds none. Check **Debug Overlay Info** — `Taskbar buttons` should be > 0. For physical icon repositioning, [ExplorerPatcher](https://github.com/valinet/ExplorerPatcher) may still help classic spacing APIs.
