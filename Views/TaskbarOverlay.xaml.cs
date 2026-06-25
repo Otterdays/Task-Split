@@ -102,7 +102,11 @@ public partial class TaskbarOverlay : Window
         HookResizeAndDrag();
     }
 
-    private void OnLoaded(object sender, RoutedEventArgs e) => SyncToTaskbar();
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        UpdateGripDashSizes();
+        SyncToTaskbar();
+    }
 
     private void OnLocationChangedByUser(object? sender, EventArgs e)
     {
@@ -116,6 +120,7 @@ public partial class TaskbarOverlay : Window
         if (_applyingAutoLayout || !IsLoaded) return;
         _manualLayout = true;
         _positionMode = "manual (drag/resize)";
+        UpdateGripDashSizes();
         ScheduleRefresh();
     }
 
@@ -300,7 +305,8 @@ public partial class TaskbarOverlay : Window
         var current = hit;
         while (current != null)
         {
-            if (current is Button or ButtonBase or TextBoxBase or ComboBox or ListBox or ListBoxItem)
+            if (current is Button or ButtonBase or TextBoxBase or ComboBox or ListBox or ListBoxItem
+                or ScrollViewer or ScrollBar or Thumb or RepeatButton)
                 return true;
             current = VisualTreeHelper.GetParent(current);
         }

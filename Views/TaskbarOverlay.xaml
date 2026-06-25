@@ -100,6 +100,7 @@
             <ScrollViewer Grid.Row="1"
                           Panel.ZIndex="1"
                           Margin="0,8,0,0"
+                          Focusable="True"
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
                 <StackPanel x:Name="GroupsPanel" />
