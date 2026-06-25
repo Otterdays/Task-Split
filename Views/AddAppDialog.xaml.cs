@@ -58,7 +58,9 @@ public partial class AddAppDialog : Window
             ResultsList.ItemsSource = results;
             StatusText.Text = results.Count == 0
                 ? "No matches — try Browse or another search term"
-                : $"{results.Count} app(s) found";
+                : string.IsNullOrWhiteSpace(query)
+                    ? $"{results.Count} app(s), newest first"
+                    : $"{results.Count} app(s) found";
         }
         catch (OperationCanceledException)
         {

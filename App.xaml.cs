@@ -35,7 +35,14 @@ public partial class App : Application
         // Timer or periodic check for window updates? Let's use simple polling for MVP
         System.Windows.Threading.DispatcherTimer timer = new();
         timer.Interval = TimeSpan.FromSeconds(2); // Refresh every 2 seconds
-        timer.Tick += (s, ev) => _overlay?.SyncToTaskbar();
+        timer.Tick += (s, ev) =>
+        {
+            // Only poll taskbar position when auto-snapped; never rebuild UI during manual drag.
+            if (_overlay?.IsManualLayout == true)
+                _overlay.Refresh();
+            else
+                _overlay?.SyncToTaskbar();
+        };
         timer.Start();
     }
 
@@ -92,6 +99,7 @@ public partial class App : Application
     private void InitializeOverlay()
     {
         _overlay = new TaskbarOverlay(_taskbarService!, _configService!, _appDiscoveryService!, _config!);
+        _overlay.ConfigChanged += config => _config = config;
         _overlay.Show();
     }
 

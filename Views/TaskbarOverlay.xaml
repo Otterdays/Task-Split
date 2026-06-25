@@ -9,7 +9,7 @@
         ShowActivated="False"
         Topmost="True"
         MinWidth="160"
-        MinHeight="64"
+        MinHeight="180"
         ResizeMode="CanResize">
     <Grid>
         <Grid.RowDefinitions>
@@ -17,7 +17,8 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0"
+        <Border x:Name="TitleBarBorder"
+                Grid.Row="0"
                 Background="#FF1A1A1C"
                 BorderBrush="#33FFFFFF"
                 BorderThickness="0,0,0,1"
@@ -41,7 +42,7 @@
                 </StackPanel>
 
                 <TextBlock x:Name="HintText"
-                           Text="drag · resize"
+                           Text="drag title · resize sides"
                            FontFamily="Segoe UI"
                            FontSize="8"
                            Foreground="#55FFFFFF"
@@ -52,9 +53,19 @@
         </Border>
 
         <Grid Grid.Row="1" Margin="8,6,8,8">
-            <Canvas x:Name="OverlayCanvas" IsHitTestVisible="False" />
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <Canvas x:Name="OverlayCanvas"
+                    Grid.RowSpan="2"
+                    Panel.ZIndex="0"
+                    IsHitTestVisible="False" />
 
             <Button x:Name="AddAppButton"
+                    Grid.Row="0"
+                    Panel.ZIndex="1"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Top"
                     Padding="8,4"
@@ -85,6 +96,14 @@
                                VerticalAlignment="Center" />
                 </StackPanel>
             </Button>
+
+            <ScrollViewer Grid.Row="1"
+                          Panel.ZIndex="1"
+                          Margin="0,8,0,0"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="GroupsPanel" />
+            </ScrollViewer>
         </Grid>
 
         <Border Grid.RowSpan="2"
@@ -92,5 +111,71 @@
                 BorderThickness="2"
                 Background="Transparent"
                 IsHitTestVisible="False" />
+
+        <!-- Resize grip hints (visual only — hit-testing stays in WndProc) -->
+        <Grid x:Name="ResizeGripLayer"
+              Grid.RowSpan="2"
+              Panel.ZIndex="3"
+              IsHitTestVisible="False">
+            <Border x:Name="LeftGrip"
+                    HorizontalAlignment="Left"
+                    Width="10"
+                    Opacity="0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5">
+                        <GradientStop Color="#005B8CFF" Offset="0" />
+                        <GradientStop Color="#665B8CFF" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Line x:Name="LeftGripDash"
+                      X1="5" X2="5"
+                      Y1="0" Y2="52"
+                      Stroke="#AA5B8CFF"
+                      StrokeThickness="1.5"
+                      StrokeDashArray="3 3"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center" />
+            </Border>
+
+            <Border x:Name="RightGrip"
+                    HorizontalAlignment="Right"
+                    Width="10"
+                    Opacity="0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="1,0.5" EndPoint="0,0.5">
+                        <GradientStop Color="#005B8CFF" Offset="0" />
+                        <GradientStop Color="#665B8CFF" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Line x:Name="RightGripDash"
+                      X1="5" X2="5"
+                      Y1="0" Y2="52"
+                      Stroke="#AA5B8CFF"
+                      StrokeThickness="1.5"
+                      StrokeDashArray="3 3"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center" />
+            </Border>
+
+            <Border x:Name="BottomGrip"
+                    VerticalAlignment="Bottom"
+                    Height="10"
+                    Opacity="0">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0.5,1" EndPoint="0.5,0">
+                        <GradientStop Color="#005B8CFF" Offset="0" />
+                        <GradientStop Color="#665B8CFF" Offset="1" />
+                    </LinearGradientBrush>
+                </Border.Background>
+                <Line x:Name="BottomGripDash"
+                      X1="0" X2="52"
+                      Y1="5" Y2="5"
+                      Stroke="#AA5B8CFF"
+                      StrokeThickness="1.5"
+                      StrokeDashArray="3 3"
+                      VerticalAlignment="Center"
+                      HorizontalAlignment="Center" />
+            </Border>
+        </Grid>
     </Grid>
 </Window>

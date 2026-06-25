@@ -7,6 +7,7 @@
         MinWidth="400"
         MinHeight="360"
         WindowStartupLocation="CenterOwner"
+        FontFamily="Segoe UI"
         Background="#FF252526"
         ResizeMode="CanResizeWithGrip">
     <Grid Margin="16">
@@ -31,15 +32,44 @@
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <TextBlock Text="Group"
-                       Foreground="#AAFFFFFF"
+                       Foreground="#CCFFFFFF"
+                       FontSize="12"
                        VerticalAlignment="Center"
                        Margin="0,0,10,0" />
             <ComboBox x:Name="GroupCombo"
                       Grid.Column="1"
                       DisplayMemberPath="Name"
-                      Background="#FF1E1E1E"
-                      Foreground="White"
-                      Padding="6,4" />
+                      FontFamily="Segoe UI"
+                      FontSize="12"
+                      Background="White"
+                      Foreground="Black"
+                      BorderBrush="#FF5B8CFF"
+                      BorderThickness="1"
+                      Padding="8,6">
+                <ComboBox.Resources>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}" Color="#FFD6E4FF" />
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}" Color="Black" />
+                </ComboBox.Resources>
+                <ComboBox.ItemContainerStyle>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground" Value="Black" />
+                        <Setter Property="Background" Value="White" />
+                        <Setter Property="FontFamily" Value="Segoe UI" />
+                        <Setter Property="FontSize" Value="12" />
+                        <Setter Property="Padding" Value="8,4" />
+                        <Style.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter Property="Foreground" Value="Black" />
+                                <Setter Property="Background" Value="#FFD6E4FF" />
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter Property="Foreground" Value="Black" />
+                                <Setter Property="Background" Value="#FFB8D4FF" />
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </ComboBox.ItemContainerStyle>
+            </ComboBox>
         </Grid>
 
         <Grid Grid.Row="2" Margin="0,0,0,8">
@@ -48,6 +78,8 @@
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
             <TextBox x:Name="SearchBox"
+                     FontFamily="Segoe UI"
+                     FontSize="12"
                      Padding="8,6"
                      Background="#FF1E1E1E"
                      Foreground="White"
@@ -66,6 +98,8 @@
 
         <ListBox x:Name="ResultsList"
                  Grid.Row="3"
+                 FontFamily="Segoe UI"
+                 FontSize="12"
                  Background="#FF1A1A1C"
                  BorderBrush="#33FFFFFF"
                  Foreground="White"
@@ -85,6 +119,7 @@
                             <Run Text="{Binding ProcessName, Mode=OneWay}" />
                             <Run Text=" · " />
                             <Run Text="{Binding Source, Mode=OneWay}" />
+                            <Run Text="{Binding AddedAtLabel, Mode=OneWay}" />
                         </TextBlock>
                     </StackPanel>
                 </DataTemplate>

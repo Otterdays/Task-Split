@@ -24,14 +24,14 @@ public class AppDiscoveryService
         var q = query.Trim();
 
         if (string.IsNullOrWhiteSpace(q))
-            return index.Take(60).ToList();
+            return SortByRecentThenName(index).Take(60).ToList();
 
         var ranked = RankFilter(index, q).Take(40).ToList();
         if (ranked.Count >= 8 || q.Length < 2)
             return ranked;
 
         var deep = await Task.Run(() => DeepFileSearch(q, ct), ct).ConfigureAwait(false);
-        return MergeResults(ranked, deep).Take(60).ToList();
+        return SortByRecentThenName(MergeResults(ranked, deep)).Take(60).ToList();
     }
 
     public DiscoveredApp? FromExePath(string exePath)
@@ -41,7 +41,7 @@ public class AppDiscoveryService
 
         var processName = Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
         var displayName = HumanizeProcessName(processName);
-        return new DiscoveredApp(processName, displayName, exePath, "Manual browse");
+        return new DiscoveredApp(processName, displayName, exePath, "Manual browse", TryGetExeAddedAt(exePath));
     }
 
     private async Task<List<DiscoveredApp>> GetIndexAsync(CancellationToken ct)
@@ -60,7 +60,7 @@ public class AppDiscoveryService
     {
         var map = new Dictionary<string, DiscoveredApp>(StringComparer.OrdinalIgnoreCase);
 
-        void Add(string? exePath, string source, string? displayName = null)
+        void Add(string? exePath, string source, string? displayName = null, DateTime? addedAt = null)
         {
             if (string.IsNullOrWhiteSpace(exePath)) return;
             if (!exePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return;
@@ -69,13 +69,28 @@ public class AppDiscoveryService
             var processName = Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(processName)) return;
 
+            var resolvedAddedAt = addedAt ?? TryGetExeAddedAt(exePath);
             var app = new DiscoveredApp(
                 processName,
                 displayName ?? HumanizeProcessName(processName),
                 exePath,
-                source);
+                source,
+                resolvedAddedAt);
 
-            map.TryAdd(processName, app);
+            if (map.TryGetValue(processName, out var existing))
+            {
+                var useNew = resolvedAddedAt > (existing.AddedAt ?? DateTime.MinValue);
+                map[processName] = existing with
+                {
+                    DisplayName = displayName ?? existing.DisplayName,
+                    ExePath = useNew ? exePath : existing.ExePath,
+                    Source = useNew ? source : existing.Source,
+                    AddedAt = MaxDate(existing.AddedAt, resolvedAddedAt),
+                };
+                return;
+            }
+
+            map[processName] = app;
         }
 
         ct.ThrowIfCancellationRequested();
@@ -90,17 +105,17 @@ public class AppDiscoveryService
         ct.ThrowIfCancellationRequested();
         AddRegistryInstalls(Add);
 
-        return map.Values.OrderBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+        return SortByRecentThenName(map.Values).ToList();
     }
 
-    private static void AddRunningProcesses(Action<string?, string, string?> add)
+    private static void AddRunningProcesses(Action<string?, string, string?, DateTime?> add)
     {
         foreach (var proc in Process.GetProcesses())
         {
             try
             {
                 if (proc.MainModule?.FileName is { } path)
-                    add(path, "Running now", proc.ProcessName);
+                    add(path, "Running now", proc.ProcessName, null);
             }
             catch
             {
@@ -113,7 +128,7 @@ public class AppDiscoveryService
         }
     }
 
-    private static void AddStartMenuShortcuts(Action<string?, string, string?> add)
+    private static void AddStartMenuShortcuts(Action<string?, string, string?, DateTime?> add)
     {
         var roots = new[]
         {
@@ -125,7 +140,7 @@ public class AppDiscoveryService
             ScanShortcuts(root, add, maxDepth: 5);
     }
 
-    private static void ScanShortcuts(string root, Action<string?, string, string?> add, int maxDepth)
+    private static void ScanShortcuts(string root, Action<string?, string, string?, DateTime?> add, int maxDepth)
     {
         if (!Directory.Exists(root)) return;
 
@@ -139,7 +154,9 @@ public class AppDiscoveryService
 
                 var target = ResolveShortcut(lnk);
                 var displayName = Path.GetFileNameWithoutExtension(lnk);
-                add(target, "Start menu", displayName);
+                DateTime? addedAt = null;
+                try { addedAt = File.GetLastWriteTimeUtc(lnk); } catch { }
+                add(target, "Start menu", displayName, addedAt);
             }
         }
         catch
@@ -166,7 +183,7 @@ public class AppDiscoveryService
         }
     }
 
-    private static void AddProgramDirectories(Action<string?, string, string?> add)
+    private static void AddProgramDirectories(Action<string?, string, string?, DateTime?> add)
     {
         var roots = new[]
         {
@@ -181,7 +198,7 @@ public class AppDiscoveryService
 
     private static void ScanForExes(
         string root,
-        Action<string?, string, string?> add,
+        Action<string?, string, string?, DateTime?> add,
         int maxDepth,
         string source)
     {
@@ -195,7 +212,7 @@ public class AppDiscoveryService
                             - root.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length;
                 if (depth > maxDepth) continue;
 
-                add(exe, source, null);
+                add(exe, source, null, null);
             }
         }
         catch
@@ -204,14 +221,14 @@ public class AppDiscoveryService
         }
     }
 
-    private static void AddRegistryInstalls(Action<string?, string, string?> add)
+    private static void AddRegistryInstalls(Action<string?, string, string?, DateTime?> add)
     {
         ReadUninstallKey(Registry.LocalMachine, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", add);
         ReadUninstallKey(Registry.LocalMachine, @"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall", add);
         ReadUninstallKey(Registry.CurrentUser, @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall", add);
     }
 
-    private static void ReadUninstallKey(RegistryKey root, string subPath, Action<string?, string, string?> add)
+    private static void ReadUninstallKey(RegistryKey root, string subPath, Action<string?, string, string?, DateTime?> add)
     {
         try
         {
@@ -226,6 +243,7 @@ public class AppDiscoveryService
                 var displayName = sub.GetValue("DisplayName") as string;
                 if (string.IsNullOrWhiteSpace(displayName)) continue;
 
+                var installDate = ParseInstallDate(sub);
                 var installLocation = sub.GetValue("InstallLocation") as string;
                 var displayIcon = sub.GetValue("DisplayIcon") as string;
 
@@ -233,7 +251,7 @@ public class AppDiscoveryService
                 {
                     var iconPath = displayIcon.Split(',')[0].Trim('"');
                     if (iconPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                        add(iconPath, "Registry", displayName);
+                        add(iconPath, "Registry", displayName, installDate);
                 }
 
                 if (!string.IsNullOrWhiteSpace(installLocation) && Directory.Exists(installLocation))
@@ -242,7 +260,7 @@ public class AppDiscoveryService
                     {
                         var exe = Directory.EnumerateFiles(installLocation, "*.exe", SearchOption.TopDirectoryOnly)
                             .FirstOrDefault();
-                        add(exe, "Registry", displayName);
+                        add(exe, "Registry", displayName, installDate);
                     }
                     catch { }
                 }
@@ -291,7 +309,8 @@ public class AppDiscoveryService
                         processName,
                         HumanizeProcessName(processName),
                         file,
-                        "File search"));
+                        "File search",
+                        TryGetExeAddedAt(file)));
 
                     if (results.Count >= 30) return results;
                 }
@@ -326,6 +345,7 @@ public class AppDiscoveryService
             .Select(app => (app, score: Score(app, q)))
             .Where(x => x.score > 0)
             .OrderByDescending(x => x.score)
+            .ThenByDescending(x => x.app.AddedAt ?? DateTime.MinValue)
             .ThenBy(x => x.app.DisplayName, StringComparer.OrdinalIgnoreCase)
             .Select(x => x.app);
     }
@@ -347,8 +367,53 @@ public class AppDiscoveryService
     {
         var map = new Dictionary<string, DiscoveredApp>(StringComparer.OrdinalIgnoreCase);
         foreach (var app in primary.Concat(extra))
-            map.TryAdd(app.ProcessName, app);
-        return map.Values.OrderBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();
+        {
+            if (map.TryGetValue(app.ProcessName, out var existing))
+                map[app.ProcessName] = existing with { AddedAt = MaxDate(existing.AddedAt, app.AddedAt) };
+            else
+                map[app.ProcessName] = app;
+        }
+
+        return SortByRecentThenName(map.Values).ToList();
+    }
+
+    private static IEnumerable<DiscoveredApp> SortByRecentThenName(IEnumerable<DiscoveredApp> apps) =>
+        apps.OrderByDescending(a => a.AddedAt ?? DateTime.MinValue)
+            .ThenBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase);
+
+    private static DateTime? MaxDate(DateTime? a, DateTime? b)
+    {
+        if (a is null) return b;
+        if (b is null) return a;
+        return a > b ? a : b;
+    }
+
+    private static DateTime? TryGetExeAddedAt(string path)
+    {
+        try
+        {
+            return File.GetCreationTimeUtc(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static DateTime? ParseInstallDate(RegistryKey key)
+    {
+        if (key.GetValue("InstallDate") is not string text || text.Length != 8)
+            return null;
+
+        if (DateTime.TryParseExact(
+                text,
+                "yyyyMMdd",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AssumeUniversal,
+                out var date))
+            return date.ToUniversalTime();
+
+        return null;
     }
 
     private static string HumanizeProcessName(string processName) =>
